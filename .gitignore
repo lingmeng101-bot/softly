@@ -1,0 +1,19 @@
+# Python
+__pycache__/
+*.py[cod]
+
+# 日志
+*.log
+
+# 数据库 / 抓下来的数据
+*.db
+*.sqlite
+*.sqlite3
+data/
+
+# 密钥
+.env
+
+# 编辑器
+.idea/
+.vscode/

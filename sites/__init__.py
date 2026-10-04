@@ -1,11 +1,12 @@
 from types import ModuleType
 from urllib.parse import urlparse
-from . import ahszu, books, xsyu
+from . import ahszu, aitool30, books, xsyu
 
 PARSERS: dict[str, ModuleType] = {
     "ahszu.edu.cn": ahszu,
     "xsyu.edu.cn": xsyu,
     "books.toscrape.com": books,
+    "30aitool.com": aitool30,
 }
 
 

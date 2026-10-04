@@ -1,0 +1,5 @@
+httpx
+tenacity
+beautifulsoup4
+lxml
+charset-normalizer

@@ -1,5 +1,10 @@
 from dataclasses import dataclass
+from pathlib import Path
 import logging
+
+BASE_DIR = Path(__file__).resolve().parent
+DATA_DIR = BASE_DIR / "data"
+DB_NAME = DATA_DIR / "softly.db"
 
 
 @dataclass

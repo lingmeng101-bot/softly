@@ -12,13 +12,13 @@ log = logging.getLogger(config.Log.LOG_NAME)     # 新项目里 Log 是类，要
 RATING_MAP = {"One": 1, "Two": 2, "Three": 3, "Four": 4, "Five": 5}
 
 
-def parse_list(html: str, base_url: str) -> list[dict]:
+def parse_list(html: str, source: str) -> list[dict]:
 
     try:
         soup = BeautifulSoup(html, "lxml")
         items = soup.select("article.product_pod")
         if not items:
-            log.warning("没匹配到 article.product_pod，页面结构可能变了：%s", base_url)
+            log.warning("没匹配到 article.product_pod，页面结构可能变了：%s", source)
             return []
 
         records = []
@@ -55,19 +55,19 @@ def parse_list(html: str, base_url: str) -> list[dict]:
                 "price": price,
                 "stock": stock,
                 "star": star,
-                "img": urljoin(base_url, img_tag.get("src", "")) if img_tag else "",
-                "url": urljoin(base_url, href),      # ← 铁律：每条必须有 url
+                "img": urljoin(source, img_tag.get("src", "")) if img_tag else "",
+                "url": urljoin(source, href),      # ← 铁律：每条必须有 url
             })
         return records
     except Exception:
-        log.exception("解析异常 base_url=%s", base_url)
+        log.exception("解析异常 source=%s", source)
         raise
 
 
-def next_page_url(html: str, base_url: str) -> str | None:
+def next_page_url(html: str, source: str) -> str | None:
 
     soup = BeautifulSoup(html, "lxml")
     next_tag = soup.select_one("li.next a")
     if not next_tag or not next_tag.get("href"):
         return None
-    return urljoin(base_url, next_tag.get("href"))
+    return urljoin(source, next_tag.get("href"))

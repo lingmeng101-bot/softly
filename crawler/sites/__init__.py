@@ -1,6 +1,6 @@
 from types import ModuleType
 from urllib.parse import urlparse
-from . import ahszu, aitool30, books, xsyu
+from . import ahszu, aitool30, books, generic, xsyu
 
 PARSERS: dict[str, ModuleType] = {
     "ahszu.edu.cn": ahszu,
@@ -19,5 +19,6 @@ def host_of(url: str) -> str:
     return host[4:] if host.startswith("www.") else host
 
 
-def get_parser(url: str) -> ModuleType | None:
-    return PARSERS.get(host_of(url))
+def get_parser(url: str) -> ModuleType:
+    """命中专属就用专属，没命中落到通用兜底 generic。"""
+    return PARSERS.get(host_of(url)) or generic

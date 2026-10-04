@@ -1,13 +1,15 @@
 
+
 from urllib.parse import urljoin
 
 from bs4 import BeautifulSoup
 
-BLOCKED = "blocked"          # 详情页被拦的标记
+BLOCKED = "blocked"          # 详情页被拦的标记（先用字符串，等第三个站再统一成状态字段）
 
-LIST_ITEM = "ul.ej_list li"
+LIST_ITEM = 'li[id^="line_u12_"]'
 NEXT_LINK = "span.p_next.p_fun a"
 
+# 正文容器：不同学校的 CMS 模板不一样，按可能性从高到低排
 CONTENT_SELECTORS = (
     "div.v_news_content, div#vsb_content, div.content, article, "
     "div.article-content, div.news_content, div.text-content, "
@@ -16,32 +18,38 @@ CONTENT_SELECTORS = (
 
 
 def _text(node) -> str:
+
     return node.get_text(strip=True) if node else ""
 
 
-def parse_list(html: str, base_url: str) -> list[dict]:
+def parse_list(html: str, source: str) -> list[dict]:
+
     soup = BeautifulSoup(html, "lxml")
     records = []
 
     for item in soup.select(LIST_ITEM):
-        day = _text(item.select_one("p.date_list.fr"))
+        # 日期在这个站是拆成两块的：p 是年月，span 是日
+        month = _text(item.select_one("div.text-ldata p"))
+        day = _text(item.select_one("div.text-ldata span"))
+        full_day = f"{month}-{day}" if month and day else ""
 
-        link_tag = item.select_one("a[href*='/info/']")
-        if not link_tag:
-            continue
-        href = link_tag.get("href", "")
-        if not href:
-            continue
+        title = _text(item.select_one("div.text-linfo h3"))
 
-        # 标题优先取 title 属性，没有就取链接文本
-        title = (link_tag.get("title") or "").strip() or _text(link_tag)
-        if not title:
+        summary = _text(item.select_one("div.text-linfo p"))
+        if len(summary) > 30:
+            summary = summary[:30] + "..."
+
+        link_tag = item.select_one("a[href]")
+        href = link_tag.get("href", "") if link_tag else ""
+
+        if not title or not href:
             continue
 
         records.append({
-            "day": day,
+            "day": full_day,
             "title": title,
-            "url": urljoin(base_url, href),      # ← 铁律：每条必须有 url
+            "summary": summary,
+            "url": urljoin(source, href),      # ← 铁律：每条必须有 url
         })
 
     return records
@@ -65,9 +73,10 @@ def parse_detail(html: str) -> str:
     return content.get_text(strip=True)
 
 
-def next_page_url(html: str, base_url: str) -> str | None:
+def next_page_url(html: str, source: str) -> str | None:
+
     soup = BeautifulSoup(html, "lxml")
     next_tag = soup.select_one(NEXT_LINK)
     if not next_tag or not next_tag.get("href"):
         return None
-    return urljoin(base_url, next_tag.get("href"))
+    return urljoin(source, next_tag.get("href"))

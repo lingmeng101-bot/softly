@@ -8,7 +8,7 @@ from crawler.sites import get_parser, host_of
 from storage import commit_db, link_exists, save_article
 
 log = logging.getLogger(Log.LOG_NAME)
-#统一，generic 给的是 Article，专属给的是 dict
+#统一，generic 是 Article，专属是 dict
 def as_dict(item) -> dict:
     return asdict(item) if is_dataclass(item) else item
 #判断专属还是通用 -> 取数 -> 解析 -> 最后判断 -> 入库
@@ -28,7 +28,6 @@ def crawl_and_save(target, conn, max_pages: int = 1) -> tuple[int, int]:
             log.error("列表页请求失败，本轮结束: %s (%s)", url, e)
             break
 
-        #格式判断在这儿，json 解析失败就当 html
         kind = sniff(res)
         payload = res.text
         if kind == "json":
@@ -77,7 +76,7 @@ def crawl_and_save(target, conn, max_pages: int = 1) -> tuple[int, int]:
 
         commit_db(conn)
 
-        #翻页，没有这个函数的模块就一页结束
+        #翻页，没有一夜结束
         if not hasattr(mod, "next_page_url"):
             break
         url = mod.next_page_url(res.text, source=str(res.url))

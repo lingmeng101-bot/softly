@@ -55,8 +55,8 @@ def save_article(
                access_status = excluded.access_status,
                fetched_at = excluded.fetched_at""",
         (source, url, day, title, summary, content, access_status,
-         datetime.now().isoformat(timespec="seconds"))   #抓取时间就地生成
+         datetime.now().isoformat(timespec="seconds"))
     )
-#提交，一页写完再提交
+
 def commit_db(conn: sqlite3.Connection) -> None:
     conn.commit()

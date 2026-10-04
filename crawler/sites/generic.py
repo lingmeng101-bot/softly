@@ -106,7 +106,7 @@ def parse_json(data: Any, source: str):
 
 
 def parse_list(payload, source: str) -> list:
-    """通用兜底入口：拿到的是 JSON 载荷就走 JSON 路，其余当 HTML 文本走。"""
+
     if isinstance(payload, (dict, list)):
         return parse_json(payload, source)
     return auto_html(BeautifulSoup(payload, "lxml"), source=source)

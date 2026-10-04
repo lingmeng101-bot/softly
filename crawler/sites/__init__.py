@@ -20,5 +20,5 @@ def host_of(url: str) -> str:
 
 
 def get_parser(url: str) -> ModuleType:
-    """命中专属就用专属，没命中落到通用兜底 generic。"""
+
     return PARSERS.get(host_of(url)) or generic

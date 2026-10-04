@@ -1,17 +1,3 @@
-# -*- coding: utf-8 -*-
-"""响应体检：HTTP 200 不代表成功。
-
-200 有三种骗法：
-    1. 200 + HTML 错误页/验证页          → 归 sniff 管（看 content-type 和首字符）
-    2. 200 + JSON，但 body 里 code 是错的 → 归这里管
-    3. 200 + 说是 json，body 其实是 HTML  → 归调用方管（res.json() 要包 try）
-
-用法：
-    err = check(解析出来的 JSON 对象)
-        err is None  → 看起来有真数据，继续走
-        err 是字符串 → 失败原因，直接进日志
-"""
-
 import re
 
 DATA_KEYS = {"data", "result", "results", "rows", "list", "items", "records", "content"}
@@ -43,11 +29,6 @@ def _find(d, keys):
 
 
 def _has_data(v) -> bool:
-    """递归判"这里头有没有真东西"。
-
-    空壳全部不算：None / "" / [] / {} / False
-    {"list": []} 也不算 —— 这正是 code=500 + data={"list":[]} 那种假成功。
-    """
     if v is None:
         return False
     if isinstance(v, bool):
@@ -62,11 +43,6 @@ def _has_data(v) -> bool:
 
 
 def _code_ok(code) -> bool:
-    """判成功值。
-
-    bool 必须单独处理：Python 里 True == 1、False == 0，
-    一起塞进集合判成员会串味（code=1 被 True 放行、status=false 被 0 放行）。
-    """
     if code is None:
         return True
     if isinstance(code, bool):
@@ -79,7 +55,6 @@ def _code_ok(code) -> bool:
 
 
 def check(raw) -> str | None:
-    """None = 看起来有真数据；字符串 = 失败原因。"""
 
     if not isinstance(raw, dict):
         return None

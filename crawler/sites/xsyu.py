@@ -33,7 +33,7 @@ def parse_list(html: str, source: str) -> list[dict]:
         if not href:
             continue
 
-        # 标题优先取 title 属性，没有就取链接文本
+        
         title = (link_tag.get("title") or "").strip() or _text(link_tag)
         if not title:
             continue

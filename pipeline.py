@@ -8,10 +8,10 @@ from crawler.sites import get_parser, host_of
 from storage import commit_db, link_exists, save_article
 
 log = logging.getLogger(Log.LOG_NAME)
-#统一，generic 是 Article，专属是 dict
+#统一
 def as_dict(item) -> dict:
     return asdict(item) if is_dataclass(item) else item
-#判断专属还是通用 -> 取数 -> 解析 -> 最后判断 -> 入库
+#判断
 def crawl_and_save(target, conn, max_pages: int = 1) -> tuple[int, int]:
     url = target.url
     page = 0
@@ -76,7 +76,7 @@ def crawl_and_save(target, conn, max_pages: int = 1) -> tuple[int, int]:
 
         commit_db(conn)
 
-        #翻页，没有一夜结束
+        #翻页
         if not hasattr(mod, "next_page_url"):
             break
         url = mod.next_page_url(res.text, source=str(res.url))

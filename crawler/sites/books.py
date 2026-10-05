@@ -7,7 +7,7 @@ from bs4 import BeautifulSoup
 
 import config
 
-log = logging.getLogger(config.Log.LOG_NAME)     # 新项目里 Log 是类，要 config.Log.LOG_NAME
+log = logging.getLogger(config.Log.LOG_NAME)     
 
 RATING_MAP = {"One": 1, "Two": 2, "Three": 3, "Four": 4, "Five": 5}
 
@@ -47,7 +47,7 @@ def parse_list(html: str, source: str) -> list[dict]:
             star = RATING_MAP.get(classes[1], 0) if len(classes) > 1 else 0
 
             href = link_tag.get("href", "") if link_tag else ""
-            if not name or not href:          # 缺关键字段就跳过，不留半条
+            if not name or not href:          
                 continue
 
             records.append({
@@ -56,7 +56,7 @@ def parse_list(html: str, source: str) -> list[dict]:
                 "stock": stock,
                 "star": star,
                 "img": urljoin(source, img_tag.get("src", "")) if img_tag else "",
-                "url": urljoin(source, href),      # ← 铁律：每条必须有 url
+                "url": urljoin(source, href),      
             })
         return records
     except Exception:

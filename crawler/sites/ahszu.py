@@ -4,12 +4,12 @@ from urllib.parse import urljoin
 
 from bs4 import BeautifulSoup
 
-BLOCKED = "blocked"          # 详情页被拦的标记（先用字符串，等第三个站再统一成状态字段）
+BLOCKED = "blocked"          
 
 LIST_ITEM = 'li[id^="line_u12_"]'
 NEXT_LINK = "span.p_next.p_fun a"
 
-# 正文容器：不同学校的 CMS 模板不一样，按可能性从高到低排
+
 CONTENT_SELECTORS = (
     "div.v_news_content, div#vsb_content, div.content, article, "
     "div.article-content, div.news_content, div.text-content, "

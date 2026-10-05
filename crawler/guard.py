@@ -7,11 +7,11 @@ CODE_KEYS = {"code", "errno", "errcode", "status", "retcode", "ret", "state"}
 OK_STRINGS = {"0", "200", "ok", "success", "true"}
 OK_NUMBERS = {0, 200}
 
-# 裸字符串要够长才算"数据" —— 防止 {"code":404,"content":"页面不存在"} 这种顶替真数据
+
 MIN_STR = 20
 
 
-# 键统一归一后再入集合，否则写 error_message 这种永远匹配不上（会被归一成 errormessage）
+
 def _norm(k: str) -> str:
     return re.sub(r"[_\-]", "", str(k).lower())
 
@@ -59,12 +59,12 @@ def check(raw) -> str | None:
     if not isinstance(raw, dict):
         return None
 
-    # 1) 有真数据就放行（有些接口 code 乱写，但数据是好的）
+    
     for k, v in raw.items():
         if _norm(k) in DATA_KEYS and _has_data(v):
             return None
 
-    # 2) 有 code → 由 code 定
+    
     ck, code = _find(raw, CODE_KEYS)
     if ck is not None:
         if _code_ok(code):
@@ -74,7 +74,7 @@ def check(raw) -> str | None:
             return f"{ck}={code!r} {msg.strip()}"
         return f"{ck}={code!r}"
 
-    # 3) 没 code，只有 message → 当错误
+    
     mk, msg = _find(raw, MSG_KEYS)
     if isinstance(msg, str) and msg.strip():
         return f"{mk}: {msg.strip()}"

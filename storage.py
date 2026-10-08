@@ -25,14 +25,14 @@ def init_db():
     conn.execute(SCHEMA)
     conn.commit()
     return conn
-#二层去重
-def link_exists(conn:sqlite3.Connection,dedup_key:str) -> bool:
+#取已存的 content_hash，没有这条返回 None
+def saved_hash(conn:sqlite3.Connection,dedup_key:str) -> str | None:
     c = conn.cursor()
     c.execute(
-        "SELECT 1 FROM articles WHERE dedup_key = ? LIMIT 1",(dedup_key,)
+        "SELECT content_hash FROM articles WHERE dedup_key = ? LIMIT 1",(dedup_key,)
     )
-    exists=c.fetchone() is not None
-    return exists
+    row=c.fetchone()
+    return row[0] if row else None
 #储存
 def save_article(
         conn:sqlite3.Connection,

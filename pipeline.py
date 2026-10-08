@@ -7,7 +7,7 @@ from crawler.fetcher import fetch
 from crawler.sniff import sniff
 from crawler.sites import get_parser, host_of
 from hashing import content_hash, dedup_key
-from storage import commit_db, link_exists, save_article
+from storage import commit_db, save_article, saved_hash
 
 log = logging.getLogger(Log.LOG_NAME)
 
@@ -59,7 +59,8 @@ def crawl_and_save(target, conn, max_pages: int = 1) -> tuple[int, int]:
                 bad += 1
                 continue
             key = dedup_key(link)
-            if key in seen or link_exists(conn, key):
+            chash = content_hash(title, row.get("content") or "")
+            if key in seen or saved_hash(conn, key) == chash:
                 skipped += 1
                 continue
             seen.add(key)
@@ -74,7 +75,7 @@ def crawl_and_save(target, conn, max_pages: int = 1) -> tuple[int, int]:
                 content=row.get("content") or "",
                 access_status="normal",
                 dedup_key=key,
-                content_hash=content_hash(title, row.get("content") or ""),
+                content_hash=chash,
             )
             added += 1
             log.info("  [+] %s 【%s】%s", host_of(link), row.get("day") or "-", title[:30])

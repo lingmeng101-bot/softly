@@ -5,13 +5,14 @@ from config import Log
 from crawler.fetcher import fetch
 from crawler.sniff import sniff
 from crawler.sites import get_parser, host_of
+from hashing import content_hash, dedup_key
 from storage import commit_db, link_exists, save_article
 
 log = logging.getLogger(Log.LOG_NAME)
-#统一
+
 def as_dict(item) -> dict:
     return asdict(item) if is_dataclass(item) else item
-#判断
+
 def crawl_and_save(target, conn, max_pages: int = 1) -> tuple[int, int]:
     url = target.url
     page = 0
@@ -56,10 +57,11 @@ def crawl_and_save(target, conn, max_pages: int = 1) -> tuple[int, int]:
             if not link or not title:
                 bad += 1
                 continue
-            if link in seen or link_exists(conn, link):
+            key = dedup_key(link)
+            if key in seen or link_exists(conn, key):
                 skipped += 1
                 continue
-            seen.add(link)
+            seen.add(key)
 
             save_article(
                 conn,
@@ -70,13 +72,15 @@ def crawl_and_save(target, conn, max_pages: int = 1) -> tuple[int, int]:
                 summary=row.get("summary"),
                 content=row.get("content") or "",
                 access_status="normal",
+                dedup_key=key,
+                content_hash=content_hash(title, row.get("content") or ""),
             )
             added += 1
             log.info("  [+] %s 【%s】%s", host_of(link), row.get("day") or "-", title[:30])
 
         commit_db(conn)
 
-        #翻页
+        #翻页，没有一夜结束
         if not hasattr(mod, "next_page_url"):
             break
         url = mod.next_page_url(res.text, source=str(res.url))

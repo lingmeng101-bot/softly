@@ -26,8 +26,9 @@ class Log:
 
 
 TARGETS:dict[str, Target] ={
-    "books":Target("https://books.toscrape.com/"),
-    "ahszu":Target("https://www.ahszu.edu.cn/")
+    "books":Target("https://books.toscrape.com/",enable=False),
+    "ahszu":Target("https://www.ahszu.edu.cn/xxxw/tzgg.htm",enable=False),
+    "30aitool.com":Target("https://www.30aitool.com/wp-json/wp/v2/tool",enable=True),
 }
 #随机UA和Headers
 USER_AGENTS = [

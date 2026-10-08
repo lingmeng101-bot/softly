@@ -4,7 +4,7 @@ from urllib.parse import urljoin
 
 from bs4 import BeautifulSoup
 
-BLOCKED = "blocked"          
+BLOCKED = "blocked"
 
 LIST_ITEM = 'li[id^="line_u12_"]'
 NEXT_LINK = "span.p_next.p_fun a"
@@ -28,7 +28,7 @@ def parse_list(html: str, source: str) -> list[dict]:
     records = []
 
     for item in soup.select(LIST_ITEM):
-        # 日期在这个站是拆成两块的：p 是年月，span 是日
+
         month = _text(item.select_one("div.text-ldata p"))
         day = _text(item.select_one("div.text-ldata span"))
         full_day = f"{month}-{day}" if month and day else ""
@@ -49,7 +49,7 @@ def parse_list(html: str, source: str) -> list[dict]:
             "day": full_day,
             "title": title,
             "summary": summary,
-            "url": urljoin(source, href),      
+            "url": urljoin(source, href),
         })
 
     return records

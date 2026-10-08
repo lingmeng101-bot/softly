@@ -3,8 +3,7 @@ from urllib.parse import urljoin
 
 from bs4 import BeautifulSoup
 
-BLOCKED = "blocked"          # 详情页被拦的标记
-
+BLOCKED = "blocked"
 LIST_ITEM = "ul.ej_list li"
 NEXT_LINK = "span.p_next.p_fun a"
 
@@ -33,7 +32,6 @@ def parse_list(html: str, source: str) -> list[dict]:
         if not href:
             continue
 
-        
         title = (link_tag.get("title") or "").strip() or _text(link_tag)
         if not title:
             continue
@@ -41,7 +39,7 @@ def parse_list(html: str, source: str) -> list[dict]:
         records.append({
             "day": day,
             "title": title,
-            "url": urljoin(source, href),      
+            "url": urljoin(source, href),
         })
 
     return records

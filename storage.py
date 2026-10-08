@@ -14,7 +14,9 @@ CREATE TABLE IF NOT EXISTS articles (
     content TEXT,
     access_status TEXT DEFAULT 'normal',
     fetched_at TEXT,
-    UNIQUE(url)
+    dedup_key TEXT NOT NULL,
+    content_hash TEXT,
+    UNIQUE(dedup_key)
 )
 """
 #初始化
@@ -24,10 +26,10 @@ def init_db():
     conn.commit()
     return conn
 #二层去重
-def link_exists(conn:sqlite3.Connection,url:str) -> bool:
+def link_exists(conn:sqlite3.Connection,dedup_key:str) -> bool:
     c = conn.cursor()
     c.execute(
-        "SELECT 1 FROM articles WHERE url = ? LIMIT 1",(url,)
+        "SELECT 1 FROM articles WHERE dedup_key = ? LIMIT 1",(dedup_key,)
     )
     exists=c.fetchone() is not None
     return exists
@@ -41,21 +43,24 @@ def save_article(
         summary:str,
         content:str,
         access_status:str,
+        dedup_key:str,
+        content_hash:str,
 ) -> None:
     c = conn.cursor()
     c.execute(
-        """INSERT INTO articles (source, url, day, title, summary, content, access_status, fetched_at)
-           VALUES (?,?,?,?,?,?,?,?)
-           ON CONFLICT(url) DO UPDATE SET
+        """INSERT INTO articles (source, url, day, title, summary, content, access_status, fetched_at, dedup_key, content_hash)
+           VALUES (?,?,?,?,?,?,?,?,?,?)
+           ON CONFLICT(dedup_key) DO UPDATE SET
                source = excluded.source,
                day = excluded.day,
                title = excluded.title,
                summary = excluded.summary,
                content = excluded.content,
                access_status = excluded.access_status,
-               fetched_at = excluded.fetched_at""",
+               fetched_at = excluded.fetched_at,
+               content_hash = excluded.content_hash""",
         (source, url, day, title, summary, content, access_status,
-         datetime.now().isoformat(timespec="seconds"))
+         datetime.now().isoformat(timespec="seconds"), dedup_key, content_hash)
     )
 
 def commit_db(conn: sqlite3.Connection) -> None:

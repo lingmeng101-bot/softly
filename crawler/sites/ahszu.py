@@ -49,7 +49,7 @@ def parse_list(html: str, source: str) -> list[dict]:
             "day": full_day,
             "title": title,
             "summary": summary,
-            "url": urljoin(source, href),      # ← 铁律：每条必须有 url
+            "url": urljoin(source, href),      
         })
 
     return records

@@ -1,6 +1,7 @@
 import logging
 from dataclasses import asdict, is_dataclass
 
+import paginator
 from config import Log
 from crawler.fetcher import fetch
 from crawler.sniff import sniff
@@ -80,10 +81,11 @@ def crawl_and_save(target, conn, max_pages: int = 1) -> tuple[int, int]:
 
         commit_db(conn)
 
-        #翻页，没有一夜结束
-        if not hasattr(mod, "next_page_url"):
-            break
-        url = mod.next_page_url(res.text, source=str(res.url))
+        #翻页，站点自己有就用它的，没有就猜参数
+        if hasattr(mod, "next_page_url"):
+            url = mod.next_page_url(res.text, source=str(res.url))
+        else:
+            url = paginator.next_page_url(url)
         page += 1
 
     log.info("本目标：新增 %d，跳过 %d，异常 %d", added, skipped, bad)

@@ -15,7 +15,7 @@ log = logging.getLogger(Log.LOG_NAME)
 
 def autodetect(content:bytes)->str :
     result=detect(content)
-    if result.get("confidence",0) < 0.5 :
+    if (result.get("confidence") or 0) < 0.5 :
         return "utf-8"
     return result.get('encoding') or 'utf-8'
 

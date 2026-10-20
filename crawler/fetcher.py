@@ -363,30 +363,35 @@ def _tier_httpcloak(url: str, headers, route: Route):
 # ---------------- T3：playwright ----------------
 
 _pw = None
-_pw_browser = None
+_pw_browsers: dict[str, object] = {}
 _pw_broken: str | None = None
 
 
 def _ensure_browser(route: Route):
-    global _pw, _pw_browser, _pw_broken
+    global _pw, _pw_broken
     if _pw_broken:
         raise _TierFail("playwright 不可用: " + _pw_broken)
-    if _pw_browser is not None:
-        return _pw_browser
+    key = "direct" if route == Route.DIRECT else "proxy"
+    browser = _pw_browsers.get(key)
+    if browser is not None:
+        return browser
     try:
-        _pw = sync_playwright().start()
+        if _pw is None:
+            _pw = sync_playwright().start()
         kwargs = dict(
             headless=config.PLAYWRIGHT_HEADLESS,
             args=["--disable-blink-features=AutomationControlled"],
         )
-        if route != Route.DIRECT:
+        #proxy 在 launch 时绑定，DIRECT 和走代理必须各起一个，不能复用
+        if key == "proxy":
             kwargs["proxy"] = {"server": config.PROXY_HTTP}
-        _pw_browser = _pw.chromium.launch(**kwargs)
+        browser = _pw.chromium.launch(**kwargs)
+        _pw_browsers[key] = browser
     except Exception as e:
         _pw_broken = f"{type(e).__name__}: {_short(e)}"
         log.warning("[降级] playwright 启动失败，后续跳过该层: %s", _short(e))
         raise _TierFail("playwright 不可用: " + _pw_broken)
-    return _pw_browser
+    return browser
 
 
 def _tier_playwright(url: str, headers, route: Route):
@@ -551,7 +556,7 @@ def fetch(
 
 
 def close_all() -> None:
-    global _pw, _pw_browser
+    global _pw
     for client in _clients.values():
         try:
             client.close()
@@ -570,11 +575,12 @@ def close_all() -> None:
         except Exception:
             pass
     _cloak_sessions.clear()
-    if _pw_browser is not None:
+    for browser in _pw_browsers.values():
         try:
-            _pw_browser.close()
-        finally:
-            _pw_browser = None
+            browser.close()
+        except Exception:
+            pass
+    _pw_browsers.clear()
     if _pw is not None:
         try:
             _pw.stop()

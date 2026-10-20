@@ -165,9 +165,16 @@ def crawl_and_save(target, conn, route=None) -> CrawlStats:
                             item_status = "blocked"
                             content = ""
                             item_err = item_err or "详情页被拦（返回系统提示页）"
+                        elif detail_text:
+                            content = detail_text
                         else:
-                            content = detail_text or ""
+                            #抓到了但没正文：标 empty，下轮还会重试
+                            item_status = "empty"
+                            item_err = item_err or "详情页没解析出正文"
                     except Exception as e:
+                        #详情页失败不能标 normal，否则下次会被"状态正常"永久跳过
+                        item_status = "empty"
+                        item_err = f"详情页抓取失败: {type(e).__name__}"
                         log.warning("详情页失败 url=%s (%s)", link, e)
                 chash = content_hash(title, content)
 

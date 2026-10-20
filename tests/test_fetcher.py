@@ -188,3 +188,37 @@ def test_network_alive(monkeypatch):
 
     monkeypatch.setattr(fetcher.httpx, "get", boom)
     assert fetcher.network_alive() is False
+
+def test_browser_cached_per_route(monkeypatch):
+    import types
+
+    launches = []
+
+    class FakeBrowser:
+        def close(self):
+            pass
+
+    class FakeChromium:
+        def launch(self, **kwargs):
+            launches.append(kwargs)
+            return FakeBrowser()
+
+    class FakePW:
+        chromium = FakeChromium()
+
+        def stop(self):
+            pass
+
+    monkeypatch.setattr(fetcher, "sync_playwright", lambda: types.SimpleNamespace(start=lambda: FakePW()))
+    monkeypatch.setattr(fetcher, "_pw", None)
+    monkeypatch.setattr(fetcher, "_pw_browsers", {})
+    monkeypatch.setattr(fetcher, "_pw_broken", None)
+
+    direct = fetcher._ensure_browser(config.Route.DIRECT)
+    proxy = fetcher._ensure_browser(config.Route.AUTO)
+    again = fetcher._ensure_browser(config.Route.DIRECT)
+
+    assert direct is again and direct is not proxy
+    assert len(launches) == 2
+    assert "proxy" not in launches[0]
+    assert launches[1]["proxy"] == {"server": config.PROXY_HTTP}

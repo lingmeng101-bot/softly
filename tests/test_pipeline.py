@@ -324,3 +324,43 @@ def test_route_override_is_passed_to_fetch(tmp_path, monkeypatch):
     pipeline.crawl_and_save(target(), conn, route=config.Route.DIRECT)
     assert seen == [config.Route.DIRECT]
     conn.close()
+
+def test_fetch_detail_failure_marks_empty_and_retries(tmp_path, monkeypatch):
+    calls = []
+
+    def fake_fetch(url, **kw):
+        if url.startswith("https://a.com/"):
+            calls.append(url)
+            raise FetchFailed("detail down")
+        return fetched(FakeRes(text="<html>ok</html>"))
+
+    item = dict(ITEM, content="列表正文")
+    mod = make_mod(lambda payload, source: [item])
+    mod.parse_detail = lambda html: "x"
+    monkeypatch.setattr(pipeline, "fetch", fake_fetch)
+    monkeypatch.setattr(pipeline, "looks_like_shell", lambda res: False)
+    monkeypatch.setattr(pipeline, "get_parser", lambda url: mod)
+    conn = db(tmp_path, monkeypatch)
+
+    first = pipeline.crawl_and_save(target(fetch_detail=True), conn)
+    assert first.added == 1
+    row = conn.execute("select access_status, error_msg, content from articles").fetchone()
+    assert row[0] == "empty" and row[1] and row[2] == "列表正文"
+
+    second = pipeline.crawl_and_save(target(fetch_detail=True), conn)
+    assert second.added == 1 and second.skipped == 0
+    assert len(calls) == 2          # 上轮 empty → 这轮还会重抓详情
+    conn.close()
+
+
+def test_fetch_detail_empty_text_marks_empty(tmp_path, monkeypatch):
+    mod = make_mod(lambda payload, source: [ITEM])
+    mod.parse_detail = lambda html: ""
+    monkeypatch.setattr(pipeline, "fetch", _detail_fetch([], "<html>empty</html>"))
+    monkeypatch.setattr(pipeline, "looks_like_shell", lambda res: False)
+    monkeypatch.setattr(pipeline, "get_parser", lambda url: mod)
+    conn = db(tmp_path, monkeypatch)
+    stats = pipeline.crawl_and_save(target(fetch_detail=True), conn)
+    assert stats.added == 1
+    assert conn.execute("select access_status from articles").fetchone()[0] == "empty"
+    conn.close()

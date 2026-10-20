@@ -26,7 +26,7 @@ main.py
 依赖：`pip install -r requirements.txt`。`curl_cffi` / `httpcloak` / `playwright` 任意一个缺失都能跑，
 只是降级链少一层；playwright 还要额外 `playwright install chromium`。
 
-代理：`config.PROXY_HTTP`（默认 `127.0.0.1:7890`）。走不走 Clash 由 `Target.route` 决定，
+代理：`config.PROXY_HTTP`（本机值写在 `.env`，缺省 `127.0.0.1:7897`）。走不走 Clash 由 `Target.route` 决定，
 具体哪个域名走哪个节点交给 Clash 的规则分流，爬虫里不写分流规则。
 ## 本机配置（`.env`）
 

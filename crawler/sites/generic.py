@@ -61,9 +61,11 @@ def auto_json(data, source):
         return []
     result = []
     for item in items:
-        url = urljoin(source, _pick(item, "url") or "")
-        if not url:
+        raw = _pick(item, "url")
+        #urljoin(source, "") 会返回列表页自己，所以必须先判空
+        if not raw or not str(raw).strip():
             continue
+        url = urljoin(source, str(raw).strip())
         result.append(Article(source=source, url=url,
                               title=_pick(item, "title") or "",
                               publish_time=_pick(item, "time"),

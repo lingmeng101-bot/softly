@@ -8,6 +8,14 @@ from crawler.fetcher import (
 )
 
 
+@pytest.fixture(autouse=True)
+def _reset_manual_session(monkeypatch):
+    # 测试不依赖本机 .env 中的人工验证会话
+    monkeypatch.setattr(config, "HTTP_USER_AGENT", "")
+    monkeypatch.setattr(config, "HTTP_COOKIE", "")
+    monkeypatch.setattr(config, "PLAYWRIGHT_STORAGE_STATE", "")
+
+
 class FakeRes:
     def __init__(self, status=200, ct="text/html; charset=utf-8", text="", headers=None):
         self.status_code = status
@@ -464,4 +472,36 @@ def test_playwright_uses_storage_state(monkeypatch, tmp_path):
     res = fetcher._tier_playwright("https://cf.example.com/", None, config.Route.AUTO)
     assert res.status_code == 200
     assert browser.kwargs == {"storage_state": str(state)}
+    assert closed["ctx"] is True
+
+
+def test_playwright_context_uses_configured_ua(monkeypatch):
+    page = _FakePage([_normal_html()], status=200)
+    closed = {"ctx": False}
+
+    class _Ctx:
+        def new_page(self):
+            return page
+
+        def close(self):
+            closed["ctx"] = True
+
+    class _Browser:
+        def __init__(self):
+            self.kwargs = None
+
+        def new_context(self, **kwargs):
+            self.kwargs = kwargs
+            return _Ctx()
+
+        def new_page(self):
+            raise AssertionError("配置 UA 时应走 new_context")
+
+    browser = _Browser()
+    monkeypatch.setattr(fetcher, "_ensure_browser", lambda route: browser)
+    monkeypatch.setattr(config, "HTTP_USER_AGENT", "MyUA/1.0")
+    monkeypatch.setattr(config, "PLAYWRIGHT_STORAGE_STATE", "")
+    res = fetcher._tier_playwright("https://cf.example.com/", None, config.Route.AUTO)
+    assert res.status_code == 200
+    assert browser.kwargs == {"user_agent": "MyUA/1.0"}
     assert closed["ctx"] is True

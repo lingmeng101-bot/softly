@@ -428,8 +428,15 @@ def _tier_playwright(url: str, headers, route: Route):
         state = config.PLAYWRIGHT_STORAGE_STATE
         if state and not os.path.isabs(state):
             state = str(config.BASE_DIR / state)
-        if state and os.path.exists(state):
-            ctx = browser.new_context(storage_state=state)
+        state = state if state and os.path.exists(state) else ""
+        ua = config.HTTP_USER_AGENT or None
+        if state or ua:
+            kw = {}
+            if state:
+                kw["storage_state"] = state
+            if ua:
+                kw["user_agent"] = ua
+            ctx = browser.new_context(**kw)
             page = ctx.new_page()
         else:
             page = browser.new_page()

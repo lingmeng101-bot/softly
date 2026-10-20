@@ -49,7 +49,7 @@ class FetchFailed(Exception):
 
 
 class ProxyDown(Exception):
-    # 连续两层连接失败时判定代理不可用，终止后续降级
+    # 代理出口连不上；AUTO 据此回落直连，FORCE 直接失败
     pass
 
 
@@ -152,53 +152,51 @@ def build_header(headers:dict|None =None) -> dict[str, str]:
     return h
 
 
-def proxy_alive() -> bool:
-    # 代理可用性探测：不可用时跳过非直连站点，避免逐站超时
-    t0 = time.perf_counter()
-    try:
-        httpx.get(
-            config.PROXY_PROBE_URL,
-            proxy=config.PROXY_HTTP,
-            timeout=config.PROXY_PROBE_TIMEOUT,
-            trust_env=False,
-        ).raise_for_status()
-    except Exception as e:
-        log.error("[proxy] probe FAILED timeout=%.1fs (%s) → 跳过非 DIRECT 站点",
-                  config.PROXY_PROBE_TIMEOUT, _short(e))
-        return False
-    log.info("[proxy] probe ok  latency=%dms", (time.perf_counter() - t0) * 1000)
-    return True
+# ---------------- 路由：尝试序列 ----------------
+# 每个 Route 展开成一串 leg，按顺序尝试；连不上才轮到下一个 leg。
+LEG_PROXY = "proxy"
+LEG_DIRECT = "direct"
+
+_LEGS: dict[Route, tuple[str, ...]] = {
+    Route.DIRECT: (LEG_DIRECT,),
+    Route.AUTO:   (LEG_PROXY, LEG_DIRECT),
+    Route.FORCE:  (LEG_PROXY,),
+}
+
+# 本轮内已确认代理连不上：后续站点不再重复等待连接超时
+_PROXY_DOWN = False
 
 
-def network_alive(url: str) -> bool:
-    # 直连可达性探测：直接探测目标站，避免用公网探针误判国内外站点的可达性
-    t0 = time.perf_counter()
-    try:
-        res = httpx.get(url, timeout=config.PROXY_PROBE_TIMEOUT,
-                        follow_redirects=True, trust_env=False)
-    except Exception as e:
-        log.error("[net] 直连不可达 %s (%s)", url, _short(e))
-        return False
-    log.info("[net] 直连可达  status=%s  latency=%dms",
-             res.status_code, (time.perf_counter() - t0) * 1000)
-    return True
+def _leg_of(route) -> str:
+    # 接受 Route 或 leg 字符串，统一成 leg
+    if route == LEG_DIRECT or route == LEG_PROXY:
+        return route
+    return LEG_DIRECT if Route(route) == Route.DIRECT else LEG_PROXY
 
 
-# 按路由方向懒创建客户端；DIRECT 不设置代理
+def _legs_for(route: Route) -> tuple[str, ...]:
+    if not _PROXY_DOWN:
+        return _LEGS[route]
+    if route == Route.FORCE:
+        return ()
+    return (LEG_DIRECT,)
+
+
+# 按 leg 懒创建客户端；direct 不设置代理
 _clients: dict[str, httpx.Client] = {}
 
 
-def _client_for(route: Route) -> httpx.Client:
-    key = "direct" if route == Route.DIRECT else "proxy"
+def _client_for(route) -> httpx.Client:
+    key = _leg_of(route)
     client = _clients.get(key)
     if client is None:
         kw = dict(
             default_encoding=autodetect,
             timeout=httpx.Timeout(connect=5, read=10, write=10, pool=5),
             follow_redirects=True,
-            trust_env=False,   # 不读取 HTTP(S)_PROXY 环境变量，DIRECT 才是真直连
+            trust_env=False,   # 不读取 HTTP(S)_PROXY 环境变量，直连才是真直连
         )
-        if key == "proxy":
+        if key == LEG_PROXY:
             kw["proxy"] = config.PROXY_HTTP
         client = httpx.Client(**kw)
         _clients[key] = client
@@ -221,7 +219,7 @@ def _should_retry(exc: BaseException) -> bool:
     retry=retry_if_exception(_should_retry),
     reraise=True,
 )
-def _http_get(url: str, headers: dict[str, str] | None, route: Route) -> httpx.Response:
+def _http_get(url: str, headers: dict[str, str] | None, route) -> httpx.Response:
     log.info("开始抓取 url=%s", url)
     res = _client_for(route).get(url, headers=build_header(headers))
     res.raise_for_status()
@@ -288,7 +286,7 @@ def _classify(res, tier: str) -> None:
 
 # ---------------- T0：httpx ----------------
 
-def _tier_httpx(url: str, headers, route: Route):
+def _tier_httpx(url: str, headers, route):
     try:
         res = _http_get(url, headers, route)
     except httpx.HTTPStatusError as e:
@@ -297,7 +295,7 @@ def _tier_httpx(url: str, headers, route: Route):
     except httpx.ConnectError as e:
         raise _TierFail("connect: " + _short(e))
     except httpx.TimeoutException as e:
-        raise _TierFail("timeout: " + _short(e))
+        raise _TierFail("connect: timeout " + _short(e))
     except httpx.RequestError as e:
         raise _TierFail("error: " + type(e).__name__)
     _classify(res, "httpx")
@@ -309,12 +307,12 @@ def _tier_httpx(url: str, headers, route: Route):
 _cffi_sessions: dict[str, object] = {}
 
 
-def _cffi_session(route: Route):
-    key = "direct" if route == Route.DIRECT else "proxy"
+def _cffi_session(route):
+    key = _leg_of(route)
     session = _cffi_sessions.get(key)
     if session is None:
         kw = dict(timeout=30, allow_redirects=True, trust_env=False)
-        if key == "proxy":
+        if key == LEG_PROXY:
             kw["proxies"] = {"http": config.PROXY_HTTP, "https": config.PROXY_HTTP}
         else:
             # libcurl 默认读取 HTTP(S)_PROXY 环境变量；显式置空才保证真正直连
@@ -324,7 +322,7 @@ def _cffi_session(route: Route):
     return session
 
 
-def _tier_curl_cffi(url: str, headers, route: Route):
+def _tier_curl_cffi(url: str, headers, route):
     session = _cffi_session(route)
     try:
         res = session.get(
@@ -356,13 +354,13 @@ def _httpcloak_ready() -> bool:
         return False
 
 
-def _cloak_session(route: Route):
-    key = "direct" if route == Route.DIRECT else "proxy"
+def _cloak_session(route):
+    key = _leg_of(route)
     session = _cloak_sessions.get(key)
     if session is None:
         session = httpcloak.Session(
             preset=config.HTTPCLOAK_PRESET,
-            proxy=None if key == "direct" else config.PROXY_HTTP,
+            proxy=None if key == LEG_DIRECT else config.PROXY_HTTP,
             timeout=30,
             http_version=config.HTTPCLOAK_HTTP_VERSION,   # HTTP/3 需要 UDP 中继，保持 auto 自动回落 h2
         )
@@ -370,7 +368,7 @@ def _cloak_session(route: Route):
     return session
 
 
-def _tier_httpcloak(url: str, headers, route: Route):
+def _tier_httpcloak(url: str, headers, route):
     session = _cloak_session(route)
     try:
         res = session.get(url, headers=_slice_business(headers) or None)
@@ -390,9 +388,9 @@ _pw_browsers: dict[str, object] = {}
 _pw_broken: dict[str, str] = {}
 
 
-def _ensure_browser(route: Route):
+def _ensure_browser(route):
     global _pw
-    key = "direct" if route == Route.DIRECT else "proxy"
+    key = _leg_of(route)
     broken = _pw_broken.get(key)
     if broken:
         raise _TierFail("playwright 不可用: " + broken)
@@ -407,10 +405,10 @@ def _ensure_browser(route: Route):
             args=["--disable-blink-features=AutomationControlled"],
         )
         # 代理在 launch 时绑定，直连与代理需分别启动浏览器实例
-        if key == "proxy":
+        if key == LEG_PROXY:
             kwargs["proxy"] = {"server": config.PROXY_HTTP}
         else:
-            # DIRECT 时禁用浏览器自身的系统代理，确保为真正直连
+            # 直连时禁用浏览器自身的系统代理
             kwargs["args"].append("--no-proxy-server")
         browser = _pw.chromium.launch(**kwargs)
         _pw_browsers[key] = browser
@@ -421,7 +419,7 @@ def _ensure_browser(route: Route):
     return browser
 
 
-def _tier_playwright(url: str, headers, route: Route):
+def _tier_playwright(url: str, headers, route):
     browser = _ensure_browser(route)
     ctx = None
     try:
@@ -565,6 +563,57 @@ def rotate_node(group: str | None = None) -> bool:
         return False
 
 
+def _fetch_leg(url: str, headers, min_tier, leg: str, rotate_on_block: bool,
+               rotate_group: str | None, host: str,
+               attempts: list[tuple[str, str]]) -> Fetched:
+    # 单条 leg 内按降级链顺序尝试；连接类失败累计成 ProxyDown 交给上层换 leg
+    start = _start_tier(url, min_tier)
+    connect_fails = 0
+    last_reason = ""
+    leg_attempts: list[tuple[str, str]] = []
+
+    for i in range(TIER_INDEX[start], len(TIERS)):
+        tier = TIERS[i]
+        nxt = TIERS[i + 1] if i + 1 < len(TIERS) else "全灭"
+        try:
+            res = _TIER_FUNCS[tier](url, headers, leg)
+        except _TierFail as e:
+            leg_attempts.append((tier, e.reason))
+            attempts.append((f"{leg}:{tier}", e.reason))
+            last_reason = e.reason
+            connect_fails = connect_fails + 1 if e.reason.startswith("connect") else 0
+            log.warning("[降级] %s  %s/%s → %s  原因=%s", host, leg, tier, nxt, e.reason)
+            # 代理不可用时后续层级同样超时，提前终止
+            if leg == LEG_PROXY and connect_fails >= 2:
+                raise ProxyDown(f"{host} 连续 {connect_fails} 层连接失败: {e.reason}")
+            continue
+
+        _remember_tier(host, tier)
+        TIER_HITS[tier] = TIER_HITS.get(tier, 0) + 1
+        return Fetched(res, tier, attempts)
+
+    # 全部层级失败且原因为 403 时换节点，再按原顺序重试一遍
+    # 这里不绑定具体层级：换节点是代理侧动作，与装了哪些可选包无关
+    if rotate_on_block and "HTTP 403" in last_reason:
+        if rotate_node(rotate_group):
+            for tier in TIERS[TIER_INDEX[start]:]:
+                try:
+                    res = _TIER_FUNCS[tier](url, headers, leg)
+                except _TierFail as e:
+                    attempts.append((f"{tier}(换节点)", e.reason))
+                    continue
+                _remember_tier(host, tier)
+                TIER_HITS[tier] = TIER_HITS.get(tier, 0) + 1
+                return Fetched(res, tier, attempts)
+
+    # 整个 leg 全是连接类失败，说明这条出口本身不通（而非站点拦你）
+    if leg == LEG_PROXY and leg_attempts and all(
+            r.startswith("connect") for _, r in leg_attempts):
+        raise ProxyDown(f"{host} 代理出口全部连接失败: {last_reason}")
+
+    raise FetchFailed(f"{host} 降级链全灭（leg={leg} 起始 {start}）: {last_reason or '无可用层'}")
+
+
 def fetch(
     url: str,
     headers: dict[str, str] | None = None,
@@ -574,49 +623,29 @@ def fetch(
     rotate_on_block: bool = False,
     rotate_group: str | None = None,
 ) -> Fetched:
+    global _PROXY_DOWN
     route = Route(route)
-    start = _start_tier(url, min_tier)
     host = host_of(url)
+    legs = _legs_for(route)
+    if not legs:
+        raise ProxyDown(f"{host} 代理已判定不可用，FORCE 站点不回落直连")
+
     attempts: list[tuple[str, str]] = []
-    connect_fails = 0
-    last_reason = ""
-
-    for i in range(TIER_INDEX[start], len(TIERS)):
-        tier = TIERS[i]
-        nxt = TIERS[i + 1] if i + 1 < len(TIERS) else "全灭"
+    for leg in legs:
         try:
-            res = _TIER_FUNCS[tier](url, headers, route)
-        except _TierFail as e:
-            attempts.append((tier, e.reason))
-            last_reason = e.reason
-            connect_fails = connect_fails + 1 if e.reason.startswith("connect") else 0
-            log.warning("[降级] %s  %s → %s  原因=%s", host, tier, nxt, e.reason)
-            # 代理不可用时后续层级同样超时，提前终止
-            if route != Route.DIRECT and connect_fails >= 2:
-                raise ProxyDown(f"{host} 连续 {connect_fails} 层连接失败: {e.reason}")
-            continue
+            return _fetch_leg(url, headers, min_tier, leg, rotate_on_block,
+                              rotate_group, host, attempts)
+        except ProxyDown as e:
+            _PROXY_DOWN = True
+            if leg == legs[-1]:
+                raise
+            log.warning("[路由] %s 代理连不上，改走直连: %s", host, e)
 
-        _remember_tier(host, tier)
-        TIER_HITS[tier] = TIER_HITS.get(tier, 0) + 1
-        return Fetched(res, tier, attempts)
-
-    # 全部层级失败且原因为 403 时，切换节点后重试一次 curl_cffi
-    if rotate_on_block and cffi_requests is not None and "HTTP 403" in last_reason:
-        if rotate_node(rotate_group):
-            try:
-                res = _tier_curl_cffi(url, headers, route)
-            except _TierFail as e:
-                attempts.append(("curl_cffi(换节点)", e.reason))
-            else:
-                _remember_tier(host, "curl_cffi")
-                TIER_HITS["curl_cffi"] = TIER_HITS.get("curl_cffi", 0) + 1
-                return Fetched(res, "curl_cffi", attempts)
-
-    raise FetchFailed(f"{host} 降级链全灭（起始 {start}）: {last_reason or '无可用层'}")
+    raise FetchFailed(f"{host} 无可用路由")
 
 
 def close_all() -> None:
-    global _pw
+    global _pw, _PROXY_DOWN
     for client in _clients.values():
         try:
             client.close()
@@ -642,6 +671,7 @@ def close_all() -> None:
             pass
     _pw_browsers.clear()
     _pw_broken.clear()   # 允许下次重新尝试启动
+    _PROXY_DOWN = False  # 下一轮重新判定
     if _pw is not None:
         try:
             _pw.stop()

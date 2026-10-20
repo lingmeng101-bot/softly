@@ -467,22 +467,33 @@ _TIER_FUNCS = {
 }
 
 
+_GROUP_TYPES = {"Selector", "URLTest", "Fallback", "LoadBalance"}
+_NOT_A_NODE = {"DIRECT", "REJECT", "REJECT-DROP", "COMPATIBLE", "PASS"}
+
+
 def rotate_node(group: str | None = None) -> bool:
     # 走 Clash 的 external-controller 换节点；失败一律当没发生
     group = group or config.CLASH_GROUP
     headers = {"Authorization": f"Bearer {config.CLASH_SECRET}"} if config.CLASH_SECRET else {}
     try:
-        r = httpx.get(f"{config.CLASH_API}/proxies/{group}", headers=headers, timeout=3)
+        r = httpx.get(f"{config.CLASH_API}/proxies", headers=headers, timeout=5)
         r.raise_for_status()
-        data = r.json()
-        nodes = [n["name"] for n in data.get("all") or [] if isinstance(n, dict)]
+        proxies = r.json().get("proxies") or {}
+        data = proxies.get(group) or {}
         cur = data.get("now")
-        nxt = next((n for n in nodes if n != cur), None)
-        if not nxt:
+        # 只挑真实节点：排除策略组自身（会递归）、DIRECT/REJECT（换了等于关代理）
+        candidates = [
+            name for name in (data.get("all") or [])
+            if isinstance(name, str) and name != cur and name not in _NOT_A_NODE
+            and (proxies.get(name) or {}).get("type") not in _GROUP_TYPES
+        ]
+        if not candidates:
+            log.info("换节点跳过：组 %s 没有可切换的节点", group)
             return False
+        nxt = candidates[0]
         httpx.put(f"{config.CLASH_API}/proxies/{group}", headers=headers,
                   json={"name": nxt}, timeout=3).raise_for_status()
-        log.warning("换节点: %s → %s", cur, nxt)
+        log.warning("换节点: %s  %s → %s", group, cur, nxt)
         return True
     except Exception as e:
         log.info("换节点失败（忽略）: %s", _short(e))

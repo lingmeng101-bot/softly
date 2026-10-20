@@ -108,12 +108,18 @@ class _Resp:
         return self._data
 
 
-def test_rotate_node_success(monkeypatch):
+def test_rotate_node_skips_current_group_and_direct(monkeypatch):
     calls = []
 
     def fake_get(url, headers=None, timeout=None):
         calls.append(("get", url))
-        return _Resp({"all": [{"name": "A"}, {"name": "B"}], "now": "A"})
+        return _Resp({"proxies": {
+            "PROXY": {"type": "Selector", "all": ["A", "DIRECT", "Sub", "B"], "now": "A"},
+            "A": {"type": "Vless"},
+            "B": {"type": "Vless"},
+            "DIRECT": {"type": "Direct"},
+            "Sub": {"type": "Selector"},
+        }})
 
     def fake_put(url, headers=None, json=None, timeout=None):
         calls.append(("put", json))
@@ -122,7 +128,24 @@ def test_rotate_node_success(monkeypatch):
     monkeypatch.setattr(fetcher.httpx, "get", fake_get)
     monkeypatch.setattr(fetcher.httpx, "put", fake_put)
     assert fetcher.rotate_node("PROXY") is True
+    # 跳过当前节点 A、DIRECT、嵌套策略组 Sub，选 B
     assert calls[1] == ("put", {"name": "B"})
+
+
+def test_rotate_node_no_candidates(monkeypatch):
+    def fake_get(url, headers=None, timeout=None):
+        return _Resp({"proxies": {
+            "PROXY": {"type": "Selector", "all": ["A", "DIRECT"], "now": "A"},
+            "A": {"type": "Vless"},
+            "DIRECT": {"type": "Direct"},
+        }})
+
+    def fake_put(url, headers=None, json=None, timeout=None):
+        raise AssertionError("没有可换节点时不该 PUT")
+
+    monkeypatch.setattr(fetcher.httpx, "get", fake_get)
+    monkeypatch.setattr(fetcher.httpx, "put", fake_put)
+    assert fetcher.rotate_node("PROXY") is False
 
 
 def test_rotate_node_failure_is_silent(monkeypatch):

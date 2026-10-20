@@ -15,9 +15,9 @@ DEFAULT_FETCH_DETAIL = False
 # ================== 代理（Clash 内核）==================
 PROXY_HTTP   = "http://127.0.0.1:7897"    # Clash Verge 混合端口（设置→端口设置），给 httpx / curl_cffi / playwright
 PROXY_SOCKS  = "socks5://127.0.0.1:7891"  # 只有需要 UDP/QUIC 时才用
-CLASH_API    = "http://127.0.0.1:9090"    # external-controller，可选
-CLASH_SECRET = ""                          # 没设就留空
-CLASH_GROUP  = "PROXY"                     # 换节点用的策略组名
+CLASH_API    = "http://127.0.0.1:9097"    # Verge → 设置 → 外部控制（本机 9097）
+CLASH_SECRET = "set-your-secret"           # 与 Verge「API 访问密钥」一致；留空表示不带认证
+CLASH_GROUP  = "🚀 节点选择"                # 换节点用的策略组名（本机订阅的主选择组）
 PROXY_PROBE_URL = "http://www.gstatic.com/generate_204"
 PROXY_PROBE_TIMEOUT = 3.0
 PROXY_FALLBACK_DIRECT = True              # 代理口不通但直连可出网（TUN/全局模式）时，非 DIRECT 站改走直连

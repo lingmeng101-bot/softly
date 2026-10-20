@@ -29,7 +29,7 @@ CHALLENGE_MARKERS = (
     "checking your browser", "enable javascript and cookies",
     "请稍候", "安全验证", "人机验证", "访问异常",
 )
-CURL_CFFI_IMPERSONATE = "chrome"          # curl_cffi 版本不同，可退到 "chrome120"
+CURL_CFFI_IMPERSONATE = "chrome120"       # 本机 0.16.3 的 "chrome" 在部分站会被断连，chrome120 实测正常
 HTTPCLOAK_PRESET = "chrome-latest"
 HTTPCLOAK_HTTP_VERSION = "auto"           # 不是 "h3"！机场多数不保证 UDP 中继
 

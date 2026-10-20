@@ -97,6 +97,33 @@ def _looks_connect(e) -> bool:
     return "connect" in type(e).__name__.lower() or "connect" in str(e).lower()
 
 
+def _flat_headers(headers) -> dict:
+    # httpcloak 的响应头值是 list（同名头多值），压平成字符串，sniff / classify 才认
+    if not isinstance(headers, dict):
+        try:
+            headers = dict(headers or {})
+        except Exception:
+            return {}
+    out = {}
+    for k, v in headers.items():
+        if isinstance(v, (list, tuple)):
+            v = v[0] if v else ""
+        out[k] = v
+    return out
+
+
+def _header_value(res, name: str) -> str:
+    headers = getattr(res, "headers", None) or {}
+    if not hasattr(headers, "get"):
+        return ""
+    value = headers.get(name)
+    if value is None:
+        value = headers.get(name.title())
+    if isinstance(value, (list, tuple)):
+        value = value[0] if value else ""
+    return str(value or "").lower()
+
+
 def _slice_business(headers: dict | None) -> dict:
     if not headers:
         return {}
@@ -180,8 +207,7 @@ def _http_get(url: str, headers: dict[str, str] | None, route: Route) -> httpx.R
 
 
 def _challenge_hit(res) -> str | None:
-    headers = getattr(res, "headers", None) or {}
-    ct = (headers.get("content-type") or headers.get("Content-Type") or "").lower()
+    ct = _header_value(res, "content-type")
     if "html" not in ct:
         return None
     try:
@@ -204,8 +230,7 @@ def _is_challenge(res) -> bool:
 
 def looks_like_shell(res) -> bool:
     # 200 但只有壳（列表靠 JS 渲染）——传输层看不出来，只能看内容
-    headers = getattr(res, "headers", None) or {}
-    ct = (headers.get("content-type") or headers.get("Content-Type") or "").lower()
+    ct = _header_value(res, "content-type")
     if "html" not in ct:
         return False
     try:
@@ -318,6 +343,7 @@ def _tier_httpcloak(url: str, headers, route: Route):
         if _looks_connect(e):
             raise _TierFail("connect: " + _short(e))
         raise _TierFail(f"error {type(e).__name__}: {_short(e)}")
+    res.headers = _flat_headers(res.headers)
     _classify(res, "httpcloak")
     return res
 

@@ -7,7 +7,7 @@
 ```
 main.py
   ├─ setup_logger / init_db（自动创建 data/）
-  ├─ proxy_alive（检测 Clash 可用性；不可用时仅运行 route=DIRECT 的站点）
+  ├─ proxy_alive（检测 Clash 可用性；不可用时跳过非 DIRECT 站点，直连可出网时 AUTO 回落直连）
   └─ config.TARGETS（站点列表：url / max_pages / fetch_detail / route）
        └─ pipeline.crawl_and_save(target, conn)
             ① 取数       crawler/fetcher.py   四层降级：httpx → curl_cffi → httpcloak → playwright

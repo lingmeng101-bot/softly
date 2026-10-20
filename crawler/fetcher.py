@@ -296,9 +296,12 @@ def _cffi_session(route: Route):
     key = "direct" if route == Route.DIRECT else "proxy"
     session = _cffi_sessions.get(key)
     if session is None:
-        kw = dict(timeout=30, allow_redirects=True)
+        kw = dict(timeout=30, allow_redirects=True, trust_env=False)
         if key == "proxy":
             kw["proxies"] = {"http": config.PROXY_HTTP, "https": config.PROXY_HTTP}
+        else:
+            # libcurl 默认读取 HTTP(S)_PROXY 环境变量；显式置空才保证真正直连
+            kw["proxies"] = {"http": "", "https": ""}
         session = cffi_requests.Session(**kw)
         _cffi_sessions[key] = session
     return session
@@ -389,6 +392,9 @@ def _ensure_browser(route: Route):
         # 代理在 launch 时绑定，直连与代理需分别启动浏览器实例
         if key == "proxy":
             kwargs["proxy"] = {"server": config.PROXY_HTTP}
+        else:
+            # DIRECT 时禁用浏览器自身的系统代理，确保为真正直连
+            kwargs["args"].append("--no-proxy-server")
         browser = _pw.chromium.launch(**kwargs)
         _pw_browsers[key] = browser
     except Exception as e:

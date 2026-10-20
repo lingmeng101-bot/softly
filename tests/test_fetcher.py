@@ -301,4 +301,30 @@ def test_browser_cached_per_route(monkeypatch):
     assert direct is again and direct is not proxy
     assert len(launches) == 2
     assert "proxy" not in launches[0]
+    assert "--no-proxy-server" in launches[0]["args"]      # DIRECT 禁用浏览器系统代理
     assert launches[1]["proxy"] == {"server": config.PROXY_HTTP}
+    assert "--no-proxy-server" not in launches[1]["args"]
+
+
+def test_cffi_session_ignores_env_proxy(monkeypatch):
+    import types
+
+    captured = []
+
+    class FakeSession:
+        def __init__(self, **kwargs):
+            captured.append(kwargs)
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(fetcher, "cffi_requests", types.SimpleNamespace(Session=FakeSession))
+    monkeypatch.setattr(fetcher, "_cffi_sessions", {})
+    fetcher._cffi_session(config.Route.DIRECT)
+    fetcher._cffi_session(config.Route.AUTO)
+    fetcher.close_all()
+
+    assert captured[0]["trust_env"] is False               # DIRECT 不读 HTTP(S)_PROXY
+    assert captured[0]["proxies"] == {"http": "", "https": ""}   # 显式置空，覆盖 libcurl 的环境代理
+    assert captured[1]["trust_env"] is False
+    assert captured[1]["proxies"] == {"http": config.PROXY_HTTP, "https": config.PROXY_HTTP}

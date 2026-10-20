@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from enum import StrEnum
 from pathlib import Path
 import logging
 
@@ -10,12 +11,47 @@ DB_NAME = DATA_DIR / "softly.db"
 MAX_PAGES_HARD = 50
 DEFAULT_MAX_PAGES = 1
 
+# ================== 代理（Clash 内核）==================
+PROXY_HTTP   = "http://127.0.0.1:7890"    # mixed-port，给 httpx / curl_cffi / playwright
+PROXY_SOCKS  = "socks5://127.0.0.1:7891"  # 只有需要 UDP/QUIC 时才用
+CLASH_API    = "http://127.0.0.1:9090"    # external-controller，可选
+CLASH_SECRET = ""                          # 没设就留空
+CLASH_GROUP  = "PROXY"                     # 换节点用的策略组名
+PROXY_PROBE_URL = "http://www.gstatic.com/generate_204"
+PROXY_PROBE_TIMEOUT = 3.0
+
+# ================== 降级链 ==================
+FETCH_TIERS = ("httpx", "curl_cffi", "httpcloak", "playwright")
+BLOCKED_CODES = {403, 412, 429, 451, 503}
+CHALLENGE_MARKERS = (
+    "just a moment", "attention required", "cf-challenge", "cf_chl_",
+    "checking your browser", "enable javascript and cookies",
+    "请稍候", "安全验证", "人机验证", "访问异常",
+)
+CURL_CFFI_IMPERSONATE = "chrome"          # curl_cffi 版本不同，可退到 "chrome120"
+HTTPCLOAK_PRESET = "chrome-latest"
+HTTPCLOAK_HTTP_VERSION = "auto"           # 不是 "h3"！机场多数不保证 UDP 中继
+
+# ================== playwright ==================
+PLAYWRIGHT_HEADLESS = True
+PLAYWRIGHT_WAIT = "domcontentloaded"       # 需要等 JS 的站可改 "networkidle"
+PLAYWRIGHT_TIMEOUT_MS = 20000
+PLAYWRIGHT_ROTATE_ON_BLOCK = False
+
+
+class Route(StrEnum):
+    AUTO   = "auto"       # 走 Clash，由规则分流（默认）
+    DIRECT = "direct"     # 根本不设 proxy，直连，绕开 Clash
+    FORCE  = "force"      # 走 Clash，且必须在 PROXY group 里（不回落 DIRECT）
+
 
 @dataclass
 class Target:
     url: str = ''
     enable: bool = True
     max_pages: int = DEFAULT_MAX_PAGES
+    route: Route = Route.AUTO
+    proxy_group: str | None = None  # 配合 FORCE / 换节点
 
     @property
     def active(self):
@@ -32,8 +68,9 @@ class Log:
 
 TARGETS:dict[str, Target] ={
     "books":Target("https://books.toscrape.com/"),
-    "ahszu":Target("https://www.ahszu.edu.cn/xxxw/tzgg.htm"),
-    "xsyu":Target("https://www.xsyu.edu.cn/xwzx/tzgg.htm"),
+    # 国内校园网走机场反而慢，出口 IP 还容易被校方风控设备拦，所以强制直连
+    "ahszu":Target("https://www.ahszu.edu.cn/xxxw/tzgg.htm", route=Route.DIRECT),
+    "xsyu":Target("https://www.xsyu.edu.cn/xwzx/tzgg.htm", route=Route.DIRECT),
     "30aitool.com":Target("https://www.30aitool.com/wp-json/wp/v2/tool"),
 }
 #随机UA和Headers

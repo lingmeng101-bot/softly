@@ -5,7 +5,8 @@ from dataclasses import asdict, dataclass, is_dataclass
 import config
 import paginator
 from config import Log
-from crawler.fetcher import fetch
+from crawler.fetcher import FetchFailed, ProxyDown, TIERS as FETCH_TIERS
+from crawler.fetcher import fetch, looks_like_shell
 from crawler.sniff import sniff
 from crawler.sites import get_parser, host_of
 from hashing import content_hash, dedup_key
@@ -43,6 +44,7 @@ def crawl_and_save(target, conn) -> CrawlStats:
     url = target.url
     page = 0
     cap = min(target.max_pages, config.MAX_PAGES_HARD)
+    tiers = FETCH_TIERS
     visited: set[str] = set()
     seen: set[str] = set()
 
@@ -53,13 +55,17 @@ def crawl_and_save(target, conn) -> CrawlStats:
             break
         visited.add(url)
 
-        log.info("[list %d/%d] %s", page + 1, cap, url)
         try:
-            res = fetch(url)
-        except Exception as e:
+            f = fetch(url, route=target.route)
+        except ProxyDown as e:
+            log.error("代理不可用，本轮结束: %s (%s)", url, e)
+            break
+        except FetchFailed as e:
             log.error("列表页请求失败，本轮结束: %s (%s)", url, e)
             break
 
+        log.info("[list %d/%d] tier=%s %s", page + 1, cap, f.tier, url)
+        res = f.res
         kind = sniff(res)
         payload = res.text
         if kind == "json":
@@ -76,6 +82,19 @@ def crawl_and_save(target, conn) -> CrawlStats:
         except Exception as e:
             log.exception("解析异常: %s (%s)", url, e)
             items = []
+
+        #内容层降级：200 但只有空壳（列表靠 JS 渲染），换下一层重取一次
+        if (not items and kind == "html" and f.tier in tiers
+                and tiers.index(f.tier) + 1 < len(tiers)
+                and looks_like_shell(res)):
+            nxt = tiers[tiers.index(f.tier) + 1]
+            log.warning("内容为空，改用 %s 重取: %s", nxt, url)
+            try:
+                f = fetch(url, min_tier=nxt, route=target.route)
+                res = f.res
+                items = mod.parse_list(res.text, source=str(res.url))
+            except Exception as e:
+                log.warning("内容降级失败，保持空结果: %s (%s)", url, e)
 
         if not items:
             log.warning("列表页没解析出任何条目，页面结构可能变了: %s", url)
@@ -124,13 +143,13 @@ def crawl_and_save(target, conn) -> CrawlStats:
 
         #翻页，站点自己有就用它的，没有就猜参数
         if hasattr(mod, "next_page_url"):
-            nxt = mod.next_page_url(res.text, source=str(res.url))
+            nxt_url = mod.next_page_url(res.text, source=str(res.url))
         else:
-            nxt = paginator.next_page_url(url)
-        if not nxt or nxt == url or nxt in visited:
-            log.info("翻页结束（%s）", "无下一页" if not nxt else "检测到环路")
+            nxt_url = paginator.next_page_url(url)
+        if not nxt_url or nxt_url == url or nxt_url in visited:
+            log.info("翻页结束（%s）", "无下一页" if not nxt_url else "检测到环路")
             break
-        url = nxt
+        url = nxt_url
         page += 1
 
     log.info("本目标：新增 %d，跳过 %d，异常 %d", stats.added, stats.skipped, stats.bad)

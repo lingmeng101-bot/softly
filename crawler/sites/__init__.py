@@ -12,9 +12,9 @@ PARSERS: dict[str, ModuleType] = {
 
 def host_of(url: str) -> str:
     netloc = urlparse(url).netloc.lower()
-    # 假设URL 里带 user:pass@
+    # 兼容 user:pass@ 形式
     netloc = netloc.split("@")[-1]
-    # 去掉端口
+    # 去除端口
     host = netloc.split(":")[0]
     return host[4:] if host.startswith("www.") else host
 

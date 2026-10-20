@@ -15,7 +15,7 @@ from storage import commit_db, save_article, saved_state
 
 log = logging.getLogger(Log.LOG_NAME)
 
-#这些状态说明上一条没抓干净，重跑时要允许覆盖
+# 重试白名单：这些状态视为未完整抓取，下次允许覆盖
 RETRYABLE = {"blocked", "api_error", "empty", "text_unsupported", "parse_error"}
 
 
@@ -51,7 +51,7 @@ def crawl_and_save(target, conn, route=None) -> CrawlStats:
     seen: set[str] = set()
 
     while url and page < cap:
-        #环路保护：参数猜错时别死在 while 里
+        # 环路保护：防止翻页参数错误导致死循环
         if url in visited:
             log.info("翻页结束（检测到环路）")
             break
@@ -81,7 +81,7 @@ def crawl_and_save(target, conn, route=None) -> CrawlStats:
                 log.warning("自称 json 但解析失败，按 html 处理: %s", e)
                 kind = "html"
         elif kind == "xml":
-            #lxml 能解析 xml，按 html 走
+            # xml 交由 lxml 解析，按 html 处理
             pass
         else:
             if kind == "text":
@@ -89,7 +89,7 @@ def crawl_and_save(target, conn, route=None) -> CrawlStats:
                 stats.bad += 1
                 break
 
-        #接口报错（200 但 code 报错）在解析前统一判，专属解析器不用各写一遍
+        # 接口级错误在解析前统一判断，各解析器无需重复实现
         if isinstance(payload, (dict, list)):
             err = check(payload)
             if err:
@@ -98,7 +98,7 @@ def crawl_and_save(target, conn, route=None) -> CrawlStats:
                 payload = []
                 allow_downgrade = False
 
-        #判断专属还是通用
+        # 选择站点解析器：命中专属解析器，否则使用通用解析器
         mod = get_parser(str(res.url))
         log.info("用 %s 解析", mod.__name__)
         try:
@@ -106,12 +106,12 @@ def crawl_and_save(target, conn, route=None) -> CrawlStats:
         except Exception as e:
             log.exception("解析异常: %s (%s)", url, e)
             items = []
-            #解析器坏了跟 TLS 指纹无关，别让内容降级白跑 playwright
+            # 解析异常与传输层无关，跳过内容降级
             stats.parse_error += 1
             access_status = "parse_error"
             allow_downgrade = False
 
-        #内容层降级：200 但只有空壳（列表靠 JS 渲染），换下一层重取一次
+        # 内容层降级：200 但为空壳页面（列表由 JS 渲染）时，换下一层重取一次
         if (not items and allow_downgrade and kind == "html" and f.tier in tiers
                 and tiers.index(f.tier) + 1 < len(tiers)
                 and looks_like_shell(res)):
@@ -127,7 +127,7 @@ def crawl_and_save(target, conn, route=None) -> CrawlStats:
         if not items:
             log.warning("列表页没解析出任何条目，页面结构可能变了: %s", url)
 
-        #最后判断，缺 url 或标题的直接丢
+        # 最终校验：缺少 url 或 title 的条目不入库
         for item in items:
             row = as_dict(item)
             link = str(row.get("url") or "").strip()
@@ -141,8 +141,8 @@ def crawl_and_save(target, conn, route=None) -> CrawlStats:
             if key in seen:
                 stats.skipped += 1
                 continue
-            #开了 fetch_detail 时 content_hash 存的是详情页正文，跟列表页算出来的对不上，
-            #所以改用「URL 已存在且状态正常」判重，避免每次重跑都重抓一遍详情页
+            # fetch_detail 模式下 content_hash 来自详情页正文，与列表页计算结果不一致；
+            # 因此改为按 URL 是否存在且状态正常判重，避免重复抓取详情页
             if target.fetch_detail:
                 skip = old_hash is not None and old_status not in RETRYABLE
             else:
@@ -154,7 +154,7 @@ def crawl_and_save(target, conn, route=None) -> CrawlStats:
 
             content = row.get("content") or ""
             item_status, item_err = access_status, error_msg
-            #详情页：只对新条目抓，天然限流；站点没 parse_detail 就跳过
+            # 详情页仅对新条目抓取；站点未实现 parse_detail 时跳过
             if target.fetch_detail:
                 detail_fn = getattr(mod, "parse_detail", None)
                 if detail_fn:
@@ -168,11 +168,11 @@ def crawl_and_save(target, conn, route=None) -> CrawlStats:
                         elif detail_text:
                             content = detail_text
                         else:
-                            #抓到了但没正文：标 empty，下轮还会重试
+                            # 抓取成功但无正文：标记 empty，下次重试
                             item_status = "empty"
                             item_err = item_err or "详情页没解析出正文"
                     except Exception as e:
-                        #详情页失败不能标 normal，否则下次会被"状态正常"永久跳过
+                        # 详情页失败不得标记 normal，否则会被判重跳过
                         item_status = "empty"
                         item_err = f"详情页抓取失败: {type(e).__name__}"
                         log.warning("详情页失败 url=%s (%s)", link, e)
@@ -199,13 +199,13 @@ def crawl_and_save(target, conn, route=None) -> CrawlStats:
                     stats.added += 1
                     log.info("  [+] %s 【%s】%s", host_of(link), row.get("publish_time") or "-", title[:30])
             except sqlite3.Error as e:
-                #单条入库失败不能中断整个 target
+                # 单条入库失败不中断当前目标
                 stats.bad += 1
                 log.exception("入库失败 url=%s (%s)", link, e)
 
         commit_db(conn)
 
-        #翻页，站点自己有就用它的，没有就猜参数
+        # 翻页：优先使用站点自定义实现，否则尝试参数递增
         if hasattr(mod, "next_page_url"):
             nxt_url = mod.next_page_url(res.text, source=str(res.url))
         else:

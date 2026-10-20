@@ -67,7 +67,7 @@ def test_sticky_hint_only_goes_up():
     host = "hint.example.com"
     _TIER_HINT.pop(host, None)
     _remember_tier(host, TIERS[-1])
-    _remember_tier(host, TIERS[0])          # 不允许往下退
+    _remember_tier(host, TIERS[0])          # 粘滞策略不回退
     assert _start_tier("https://" + host + "/x", None) == TIERS[-1]
 
 
@@ -128,7 +128,7 @@ def test_rotate_node_skips_current_group_and_direct(monkeypatch):
     monkeypatch.setattr(fetcher.httpx, "get", fake_get)
     monkeypatch.setattr(fetcher.httpx, "put", fake_put)
     assert fetcher.rotate_node("PROXY") is True
-    # 跳过当前节点 A、DIRECT、嵌套策略组 Sub，选 B
+    # 跳过当前节点、DIRECT 与策略组，选择 B
     assert calls[1] == ("put", {"name": "B"})
 
 

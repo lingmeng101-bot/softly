@@ -5,13 +5,13 @@ from config import Log
 
 log = logging.getLogger(Log.LOG_NAME)
 
-#只认 page 型：offset 的步长从 URL 推不出来（offset=40 是 20 一页还是 40 一页？）
+# 仅支持 page 型分页；offset 步长无法从 URL 推断
 ALIASES: dict[str, set[str]] = {
     "page":   {"page", "p", "pg", "paged", "pageno", "pagenum", "pn", "pageindex"},
 }
 LOOKUP = {a.lower(): std for std, names in ALIASES.items() for a in names}
 
-#这些参数名是 offset 型分页的信号，只能提示，不能猜
+# 以下参数名用于识别 offset 型分页，仅作提示，不参与推算
 _OFFSET_NAMES = {"offset", "start", "from", "skip", "begin", "startindex"}
 
 

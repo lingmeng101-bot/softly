@@ -11,10 +11,10 @@ from models import Article
 
 log = logging.getLogger(Log.LOG_NAME)
 
-# 时间
+# 发布时间识别
 DATE_RE = re.compile(r"\d{4}[-/年]\d{1,2}[-/月]\d{1,2}")
 
-# 统一
+# 字段别名归一
 FIELD_ALIASES = {
     "title":   {"title", "name", "subject", "headline", "caption"},
     "url":     {"url", "link", "href", "detailurl"},
@@ -62,7 +62,7 @@ def auto_json(data, source):
     result = []
     for item in items:
         raw = _pick(item, "url")
-        #urljoin(source, "") 会返回列表页自己，所以必须先判空
+        # urljoin 对空串会返回列表页自身，需先判空
         if not raw or not str(raw).strip():
             continue
         url = urljoin(source, str(raw).strip())

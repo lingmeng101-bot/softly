@@ -7,7 +7,7 @@ from bs4 import BeautifulSoup
 
 import config
 
-log = logging.getLogger(config.Log.LOG_NAME)     # 新项目里 Log 是类，要 config.Log.LOG_NAME
+log = logging.getLogger(config.Log.LOG_NAME)     # logger 命名空间
 
 RATING_MAP = {"One": 1, "Two": 2, "Three": 3, "Four": 4, "Five": 5}
 

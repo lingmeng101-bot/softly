@@ -26,7 +26,7 @@ CREATE TABLE IF NOT EXISTS articles (
 """
 
 
-#老库补列：day → publish_time，补 error_msg
+# 旧库迁移：day → publish_time，并补充 error_msg 列
 def _migrate(conn: sqlite3.Connection) -> None:
     cols = {r[1] for r in conn.execute("PRAGMA table_info(articles)")}
     if "day" in cols and "publish_time" not in cols:
@@ -38,7 +38,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
         log.info("迁移：新增 error_msg 列")
 
 
-#初始化
+# 初始化：建目录、建表、迁移
 def init_db():
     config.DATA_DIR.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(config.DB_NAME)
@@ -51,7 +51,7 @@ def init_db():
     return conn
 
 
-#取已存的 content_hash 和 access_status，没有这条返回 (None, None)
+# 读取已存的 content_hash 与 access_status；无记录时返回 (None, None)
 def saved_state(conn: sqlite3.Connection, dedup_key: str) -> tuple[str | None, str | None]:
     row = conn.execute(
         "SELECT content_hash, access_status FROM articles WHERE dedup_key = ? LIMIT 1",
@@ -60,7 +60,7 @@ def saved_state(conn: sqlite3.Connection, dedup_key: str) -> tuple[str | None, s
     return (row[0], row[1]) if row else (None, None)
 
 
-#储存：dedup_key 唯一，命中就更新
+# 写入：dedup_key 唯一，冲突时更新
 def save_article(
         conn: sqlite3.Connection,
         *,

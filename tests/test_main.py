@@ -32,7 +32,7 @@ def test_force_does_not_fall_back_to_direct(monkeypatch):
         "direct": config.Target("https://direct.example.com/", route=config.Route.DIRECT),
     })
     main_mod.main()
-    # FORCE 被跳过；AUTO 回落直连；DIRECT 保持直连
+    # FORCE 跳过；AUTO 回落直连；DIRECT 保持
     assert calls == [
         ("https://auto.example.com/", config.Route.DIRECT),
         ("https://direct.example.com/", config.Route.DIRECT),

@@ -10,8 +10,8 @@ _WS=re.compile(r"\s+")
 def _norm_text(s: str) -> str:
     return _WS.sub("", s or "")
 
-# 注意：这里刻意把 scheme 统一成 https，使 http/https 两种写法的同一资源
-# 归一到同一个 dedup_key。改动此行为会让全部存量 dedup_key 变化，需要清库重跑。
+# 有意将 scheme 统一为 https，使 http/https 两种写法归一为同一资源
+# 修改此行为会导致全部存量 dedup_key 变化，需要清库重跑。
 def norm_url(url: str) -> str:
     sp = urlparse((url or "").strip())
     host = sp.netloc.lower()

@@ -11,7 +11,7 @@ def setup_logger(log_level: int=Log.LOG_LEVEL,log_file: Path| str=BASE_DIR / Log
     logger.setLevel(log_level)
     logger.propagate = False
 
-    #幂等
+    # 幂等：已初始化时直接返回
     if logger.handlers:
         return logger
 

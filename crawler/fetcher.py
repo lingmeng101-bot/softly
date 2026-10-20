@@ -19,7 +19,7 @@ from crawler.sites import host_of
 
 log = logging.getLogger(Log.LOG_NAME)
 
-# ---- 可选依赖：缺任何一层都能跑，只是降级链少一层 ----
+# ---- 可选依赖：缺失时跳过对应层级 ----
 try:
     from curl_cffi import requests as cffi_requests
 except ImportError:
@@ -36,22 +36,22 @@ except ImportError:
     sync_playwright = None
 
 
-# curl_cffi / httpcloak 自带与指纹匹配的 UA 和 Accept-*，上层只透传业务 header
+# curl_cffi / httpcloak 自带与指纹匹配的请求头，此处仅透传业务字段
 _BUSINESS_HEADERS = {"referer", "x-requested-with", "ali-ref"}
 
 
 class FetchFailed(Exception):
-    # 降级链判死：换浏览器也一样（如 404），或所有层都失败
+    # 降级链终止：非指纹相关的 4xx，或全部层级失败
     pass
 
 
 class ProxyDown(Exception):
-    # 连续两层连接失败，判定代理挂了，别再往上跳 playwright
+    # 连续两层连接失败时判定代理不可用，终止后续降级
     pass
 
 
 class _TierFail(Exception):
-    # 单层失败：记 reason 后交给下一层
+    # 单层失败：记录原因后进入下一层
     def __init__(self, reason: str):
         self.reason = reason
         super().__init__(reason)
@@ -64,7 +64,7 @@ class Fetched(NamedTuple):
 
 
 class BrowserResponse:
-    # 把 playwright 页面包成 sniff / pipeline 认识的形状
+    # 将 playwright 页面适配为 sniff / pipeline 使用的响应接口
 
     def __init__(self, html: str, status_code: int, url: str, headers: dict):
         self._html = html
@@ -98,7 +98,7 @@ def _looks_connect(e) -> bool:
 
 
 def _flat_headers(headers) -> dict:
-    # httpcloak 的响应头值是 list（同名头多值），压平成字符串，sniff / classify 才认
+    # httpcloak 响应头值为列表（多值），统一压平为字符串
     if not isinstance(headers, dict):
         try:
             headers = dict(headers or {})
@@ -137,7 +137,7 @@ def autodetect(content:bytes)->str :
     return result.get('encoding') or 'utf-8'
 
 
-#headers参数配置
+# 构造请求头（默认头 + 随机 UA）
 def build_header(headers:dict|None =None) -> dict[str, str]:
     h=dict(DEFAULT_HEADERS)
     h['User-Agent'] = random.choice(USER_AGENTS)
@@ -147,7 +147,7 @@ def build_header(headers:dict|None =None) -> dict[str, str]:
 
 
 def proxy_alive() -> bool:
-    # 探一下 Clash 通不通，挂了就别把国外站挨个超时一遍
+    # 代理可用性探测：不可用时跳过非直连站点，避免逐站超时
     t0 = time.perf_counter()
     try:
         httpx.get(
@@ -156,7 +156,7 @@ def proxy_alive() -> bool:
             timeout=config.PROXY_PROBE_TIMEOUT,
         ).raise_for_status()
     except Exception as e:
-        log.error("[proxy] probe FAILED timeout=%.1fs (%s) → 跳过不走 DIRECT 的站点",
+        log.error("[proxy] probe FAILED timeout=%.1fs (%s) → 跳过非 DIRECT 站点",
                   config.PROXY_PROBE_TIMEOUT, _short(e))
         return False
     log.info("[proxy] probe ok  latency=%dms", (time.perf_counter() - t0) * 1000)
@@ -164,7 +164,7 @@ def proxy_alive() -> bool:
 
 
 def network_alive() -> bool:
-    # 代理口不通时，直连还能不能出网？TUN / 全局模式下可以
+    # 直连出口探测：用于 TUN / 全局模式下代理端口不可用的场景
     t0 = time.perf_counter()
     try:
         httpx.get(config.PROXY_PROBE_URL, timeout=config.PROXY_PROBE_TIMEOUT).raise_for_status()
@@ -175,7 +175,7 @@ def network_alive() -> bool:
     return True
 
 
-#每层、每个方向一个 client/session，懒创建；DIRECT 一律不设 proxy
+# 按路由方向懒创建客户端；DIRECT 不设置代理
 _clients: dict[str, httpx.Client] = {}
 
 
@@ -241,7 +241,7 @@ def _is_challenge(res) -> bool:
 
 
 def looks_like_shell(res) -> bool:
-    # 200 但只有壳（列表靠 JS 渲染）——传输层看不出来，只能看内容
+    # 判断 200 响应是否为仅含占位节点的空壳页面
     ct = _header_value(res, "content-type")
     if "html" not in ct:
         return False
@@ -259,8 +259,8 @@ def _classify(res, tier: str) -> None:
     if code >= 500:
         raise _TierFail(f"HTTP {code}")
     if code >= 400:
-        # 401 / 404 / 410 换浏览器也一样，别浪费后面三层
-        raise FetchFailed(f"{tier} HTTP {code}，换浏览器也一样，不再降级")
+        # 非指纹相关状态码：终止降级
+        raise FetchFailed(f"{tier} HTTP {code}：非传输层问题，终止降级")
     hit = _challenge_hit(res)
     if hit:
         raise _TierFail(f"challenge({hit})")
@@ -341,7 +341,7 @@ def _cloak_session(route: Route):
             preset=config.HTTPCLOAK_PRESET,
             proxy=None if key == "direct" else config.PROXY_HTTP,
             timeout=30,
-            http_version=config.HTTPCLOAK_HTTP_VERSION,   # 必须 auto，见任务书 h3 坑
+            http_version=config.HTTPCLOAK_HTTP_VERSION,   # HTTP/3 需要 UDP 中继，保持 auto 自动回落 h2
         )
         _cloak_sessions[key] = session
     return session
@@ -382,7 +382,7 @@ def _ensure_browser(route: Route):
             headless=config.PLAYWRIGHT_HEADLESS,
             args=["--disable-blink-features=AutomationControlled"],
         )
-        #proxy 在 launch 时绑定，DIRECT 和走代理必须各起一个，不能复用
+        # 代理在 launch 时绑定，直连与代理需分别启动浏览器实例
         if key == "proxy":
             kwargs["proxy"] = {"server": config.PROXY_HTTP}
         browser = _pw.chromium.launch(**kwargs)
@@ -448,7 +448,7 @@ def log_tiers() -> None:
 
 
 def _remember_tier(host: str, tier: str) -> None:
-    # 只允许往上提，某个站一旦需要 curl_cffi，之后一直从 curl_cffi 起
+    # 粘滞策略：仅在层级提升时记录，不回退
     cur = _TIER_HINT.get(host)
     if cur is None or TIER_INDEX[tier] > TIER_INDEX[cur]:
         _TIER_HINT[host] = tier
@@ -477,7 +477,7 @@ _NOT_A_NODE = {"DIRECT", "REJECT", "REJECT-DROP", "COMPATIBLE", "PASS"}
 
 
 def rotate_node(group: str | None = None) -> bool:
-    # 走 Clash 的 external-controller 换节点；失败一律当没发生
+    # 通过 Clash external-controller 切换节点；失败时静默返回
     group = group or config.CLASH_GROUP
     headers = {"Authorization": f"Bearer {config.CLASH_SECRET}"} if config.CLASH_SECRET else {}
     try:
@@ -486,7 +486,7 @@ def rotate_node(group: str | None = None) -> bool:
         proxies = r.json().get("proxies") or {}
         data = proxies.get(group) or {}
         cur = data.get("now")
-        # 只挑真实节点：排除策略组自身（会递归）、DIRECT/REJECT（换了等于关代理）
+        # 仅选取真实节点，排除策略组与 DIRECT/REJECT
         candidates = [
             name for name in (data.get("all") or [])
             if isinstance(name, str) and name != cur and name not in _NOT_A_NODE
@@ -501,7 +501,7 @@ def rotate_node(group: str | None = None) -> bool:
         log.warning("换节点: %s  %s → %s", group, cur, nxt)
         return True
     except Exception as e:
-        log.info("换节点失败（忽略）: %s", _short(e))
+        log.info("节点切换失败（忽略）: %s", _short(e))
         return False
 
 
@@ -531,7 +531,7 @@ def fetch(
             last_reason = e.reason
             connect_fails = connect_fails + 1 if e.reason.startswith("connect") else 0
             log.warning("[降级] %s  %s → %s  原因=%s", host, tier, nxt, e.reason)
-            # 代理挂了的话，后面每层都是同样超时，没意义
+            # 代理不可用时后续层级同样超时，提前终止
             if route != Route.DIRECT and connect_fails >= 2:
                 raise ProxyDown(f"{host} 连续 {connect_fails} 层连接失败: {e.reason}")
             continue
@@ -540,7 +540,7 @@ def fetch(
         TIER_HITS[tier] = TIER_HITS.get(tier, 0) + 1
         return Fetched(res, tier, attempts)
 
-    # 四层全灭；403 时换个节点再给 curl_cffi 一次机会（可选）
+    # 全部层级失败且原因为 403 时，切换节点后重试一次 curl_cffi
     if rotate_on_block and cffi_requests is not None and "HTTP 403" in last_reason:
         if rotate_node(proxy_group):
             try:

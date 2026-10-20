@@ -23,7 +23,7 @@ def test_auto_json_joins_relative_url():
 
 
 def test_auto_json_maps_time_and_content():
-    #find_list 要求列表里至少 2 条同构 dict，所以给两条
+    # find_list 要求至少两条同构 dict
     data = {"results": [
         {"title": "T", "url": "/x", "publish_time": "2026-01-02", "content": "正文"},
         {"title": "T2", "url": "/y", "publish_time": "2026-01-03", "content": "正文2"},

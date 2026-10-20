@@ -32,14 +32,14 @@ def _has_data(v) -> bool:
     if v is None:
         return False
     if isinstance(v, bool):
-        return v                      # False 不当数据
+        return v                      # False 视为无数据
     if isinstance(v, str):
         return len(v.strip()) >= MIN_STR
     if isinstance(v, dict):
         return any(_has_data(x) for x in v.values())
     if isinstance(v, (list, tuple, set)):
         return any(_has_data(x) for x in v)
-    return True                       # 非空数字之类
+    return True                       # 其余非空值视为有数据
 
 
 def _code_ok(code) -> bool:

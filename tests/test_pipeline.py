@@ -55,7 +55,7 @@ def test_save_items_and_stats(tmp_path, monkeypatch):
     assert (stats.added, stats.skipped, stats.bad, stats.parse_error) == (1, 0, 0, 0)
     row = conn.execute("select publish_time, title, access_status from articles").fetchone()
     assert tuple(row) == ("2026-01-01", "标题", "normal")
-    # 账平
+    # 计数守恒
     assert stats.added + stats.skipped + stats.bad + stats.blocked + stats.parse_error == 1
     conn.close()
 
@@ -145,7 +145,7 @@ def test_parse_error_suppresses_content_downgrade(tmp_path, monkeypatch):
     conn = db(tmp_path, monkeypatch)
     stats = pipeline.crawl_and_save(target(), conn)
     assert stats.parse_error == 1
-    assert calls == [None]          # 没有触发第二次（min_tier）请求
+    assert calls == [None]          # 未触发第二次（min_tier）请求
     conn.close()
 
 
@@ -163,7 +163,7 @@ def test_api_error_stops_before_parse(tmp_path, monkeypatch):
     monkeypatch.setattr(pipeline, "get_parser", lambda url: make_mod(fake_parse))
     conn = db(tmp_path, monkeypatch)
     stats = pipeline.crawl_and_save(target(), conn)
-    assert got == [[]]              # 解析器拿到空列表，不再猜
+    assert got == [[]]              # 解析器收到空列表
     assert stats.added == 0
     conn.close()
 
@@ -285,7 +285,7 @@ def test_fetch_detail_failure_keeps_list_content(tmp_path, monkeypatch):
 
 def test_fetch_detail_without_parse_detail_is_skipped(tmp_path, monkeypatch):
     detail_calls = []
-    mod = make_mod(lambda payload, source: [ITEM])          # 没有 parse_detail
+    mod = make_mod(lambda payload, source: [ITEM])          # 未实现 parse_detail
     monkeypatch.setattr(pipeline, "fetch", _detail_fetch(detail_calls))
     monkeypatch.setattr(pipeline, "looks_like_shell", lambda res: False)
     monkeypatch.setattr(pipeline, "get_parser", lambda url: mod)
@@ -349,7 +349,7 @@ def test_fetch_detail_failure_marks_empty_and_retries(tmp_path, monkeypatch):
 
     second = pipeline.crawl_and_save(target(fetch_detail=True), conn)
     assert second.added == 1 and second.skipped == 0
-    assert len(calls) == 2          # 上轮 empty → 这轮还会重抓详情
+    assert len(calls) == 2          # 上轮为 empty，本轮重新抓取详情
     conn.close()
 
 

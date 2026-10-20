@@ -13,8 +13,8 @@ class Article:
     dedup_key: str = ""
     content_hash: str = ""
     fetched_at: str = field(
-        #自动生成
+        # 默认按当前时间生成
         default_factory=lambda: datetime.now().isoformat(timespec="seconds"),
-        #跳过抓取时间对比
+        # 不参与相等性比较
         compare=False,
     )

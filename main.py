@@ -24,7 +24,7 @@ def main() -> None:
     if not alive and config.PROXY_FALLBACK_DIRECT:
         if network_alive():
             direct_only = True
-            log.warning("[proxy] %s 不通，但直连可用（TUN/全局模式？）→ 非 DIRECT 站点改走直连",
+            log.warning("[proxy] %s 不可用，但直连可出网（TUN/全局模式）→ 非 DIRECT 站点改走直连",
                         config.PROXY_HTTP)
     try:
         for name, target in config.TARGETS.items():
@@ -38,7 +38,7 @@ def main() -> None:
                 if target.route == config.Route.FORCE:
                     log.error("代理不可用，FORCE 站点不回落直连，跳过: %s", name)
                     continue
-            #只让 AUTO 回落直连；FORCE 已跳过，DIRECT 本来就是直连
+            # 仅 AUTO 回落直连；FORCE 已跳过，DIRECT 保持原路由
             route = config.Route.DIRECT if (direct_only and target.route == config.Route.AUTO) else target.route
             log.info("=== %s  %s route=%s fetch_detail=%s",
                      name, target.url, route, target.fetch_detail)

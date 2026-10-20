@@ -40,11 +40,12 @@ def as_dict(item) -> dict:
     return asdict(item) if is_dataclass(item) else item
 
 
-def crawl_and_save(target, conn) -> CrawlStats:
+def crawl_and_save(target, conn, route=None) -> CrawlStats:
     stats = CrawlStats()
     url = target.url
     page = 0
     cap = min(target.max_pages, config.MAX_PAGES_HARD)
+    fetch_route = route if route is not None else target.route
     tiers = FETCH_TIERS
     visited: set[str] = set()
     seen: set[str] = set()
@@ -57,7 +58,7 @@ def crawl_and_save(target, conn) -> CrawlStats:
         visited.add(url)
 
         try:
-            f = fetch(url, route=target.route, proxy_group=target.proxy_group,
+            f = fetch(url, route=fetch_route, proxy_group=target.proxy_group,
                       rotate_on_block=config.PLAYWRIGHT_ROTATE_ON_BLOCK)
         except ProxyDown as e:
             log.error("代理不可用，本轮结束: %s (%s)", url, e)
@@ -117,7 +118,7 @@ def crawl_and_save(target, conn) -> CrawlStats:
             nxt = tiers[tiers.index(f.tier) + 1]
             log.warning("内容为空，改用 %s 重取: %s", nxt, url)
             try:
-                f = fetch(url, min_tier=nxt, route=target.route, proxy_group=target.proxy_group)
+                f = fetch(url, min_tier=nxt, route=fetch_route, proxy_group=target.proxy_group)
                 res = f.res
                 items = mod.parse_list(res.text, source=str(res.url))
             except Exception as e:
@@ -158,7 +159,7 @@ def crawl_and_save(target, conn) -> CrawlStats:
                 detail_fn = getattr(mod, "parse_detail", None)
                 if detail_fn:
                     try:
-                        d = fetch(link, route=target.route)
+                        d = fetch(link, route=fetch_route)
                         detail_text = detail_fn(d.res.text)
                         if detail_text == "blocked":
                             item_status = "blocked"

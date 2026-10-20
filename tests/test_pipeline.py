@@ -309,3 +309,18 @@ def test_fetch_detail_second_run_does_not_refetch(tmp_path, monkeypatch):
     assert (second.added, second.skipped) == (0, 1)
     assert len(detail_calls) == 1
     conn.close()
+
+def test_route_override_is_passed_to_fetch(tmp_path, monkeypatch):
+    seen = []
+
+    def fake_fetch(url, **kw):
+        seen.append(kw.get("route"))
+        return fetched(FakeRes(text="<html>ok</html>"))
+
+    monkeypatch.setattr(pipeline, "fetch", fake_fetch)
+    monkeypatch.setattr(pipeline, "looks_like_shell", lambda res: False)
+    monkeypatch.setattr(pipeline, "get_parser", lambda url: make_mod(lambda payload, source: []))
+    conn = db(tmp_path, monkeypatch)
+    pipeline.crawl_and_save(target(), conn, route=config.Route.DIRECT)
+    assert seen == [config.Route.DIRECT]
+    conn.close()

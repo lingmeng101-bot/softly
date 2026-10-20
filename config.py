@@ -13,13 +13,14 @@ DEFAULT_MAX_PAGES = 1
 DEFAULT_FETCH_DETAIL = False
 
 # ================== 代理（Clash 内核）==================
-PROXY_HTTP   = "http://127.0.0.1:7890"    # mixed-port，给 httpx / curl_cffi / playwright
+PROXY_HTTP   = "http://127.0.0.1:7897"    # Clash Verge 混合端口（设置→端口设置），给 httpx / curl_cffi / playwright
 PROXY_SOCKS  = "socks5://127.0.0.1:7891"  # 只有需要 UDP/QUIC 时才用
 CLASH_API    = "http://127.0.0.1:9090"    # external-controller，可选
 CLASH_SECRET = ""                          # 没设就留空
 CLASH_GROUP  = "PROXY"                     # 换节点用的策略组名
 PROXY_PROBE_URL = "http://www.gstatic.com/generate_204"
 PROXY_PROBE_TIMEOUT = 3.0
+PROXY_FALLBACK_DIRECT = True              # 代理口不通但直连可出网（TUN/全局模式）时，非 DIRECT 站改走直连
 
 # ================== 降级链 ==================
 FETCH_TIERS = ("httpx", "curl_cffi", "httpcloak", "playwright")

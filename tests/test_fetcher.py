@@ -151,3 +151,17 @@ def test_consecutive_connect_fails_raise_proxy_down(monkeypatch):
         monkeypatch.setitem(fetcher._TIER_FUNCS, tier, fail)
     with pytest.raises(fetcher.ProxyDown):
         fetcher.fetch("https://down2.example.com/", route=config.Route.AUTO)
+
+def test_network_alive(monkeypatch):
+    class _R:
+        def raise_for_status(self):
+            pass
+
+    monkeypatch.setattr(fetcher.httpx, "get", lambda *args, **kwargs: _R())
+    assert fetcher.network_alive() is True
+
+    def boom(*args, **kwargs):
+        raise RuntimeError("no net")
+
+    monkeypatch.setattr(fetcher.httpx, "get", boom)
+    assert fetcher.network_alive() is False

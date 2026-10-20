@@ -163,6 +163,18 @@ def proxy_alive() -> bool:
     return True
 
 
+def network_alive() -> bool:
+    # 代理口不通时，直连还能不能出网？TUN / 全局模式下可以
+    t0 = time.perf_counter()
+    try:
+        httpx.get(config.PROXY_PROBE_URL, timeout=config.PROXY_PROBE_TIMEOUT).raise_for_status()
+    except Exception as e:
+        log.error("[net] 直连探活失败 (%s)", _short(e))
+        return False
+    log.info("[net] 直连可用  latency=%dms", (time.perf_counter() - t0) * 1000)
+    return True
+
+
 #每层、每个方向一个 client/session，懒创建；DIRECT 一律不设 proxy
 _clients: dict[str, httpx.Client] = {}
 

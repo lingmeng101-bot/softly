@@ -3,8 +3,14 @@ import main as main_mod
 
 
 class _FakeConn:
+    def __init__(self):
+        self.rollbacks = 0
+
     def close(self):
         pass
+
+    def rollback(self):
+        self.rollbacks += 1
 
 
 def _setup(monkeypatch):
@@ -47,6 +53,32 @@ def test_inactive_target_skipped(monkeypatch):
     })
     main_mod.main()
     assert calls == ["https://on.example.com/"]
+
+
+def test_one_failed_target_does_not_stop_the_batch(monkeypatch):
+    # 框架级隔离：任何单个目标抛异常，后续目标必须照跑
+    conn = _FakeConn()
+    calls = []
+    monkeypatch.setattr(main_mod, "setup_logger", lambda: None)
+    monkeypatch.setattr(main_mod, "log_tiers", lambda: None)
+    monkeypatch.setattr(main_mod, "init_db", lambda: conn)
+    monkeypatch.setattr(main_mod, "close_all", lambda: None)
+
+    def crawl(target, conn):
+        calls.append(target.url)
+        if "b" in target.url:
+            raise RuntimeError("模拟解析器/翻页/入库抛异常")
+        return main_mod.CrawlStats(added=1)
+
+    monkeypatch.setattr(main_mod, "crawl_and_save", crawl)
+    monkeypatch.setattr(config, "TARGETS", {
+        k: config.Target(f"https://{k}.example/") for k in "abc"
+    })
+
+    main_mod.main()
+
+    assert calls == ["https://a.example/", "https://b.example/", "https://c.example/"]
+    assert conn.rollbacks == 1          # 失败目标的事务已回滚
 
 
 def test_stats_accumulated_across_targets(monkeypatch):

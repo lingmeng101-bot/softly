@@ -2,10 +2,28 @@ from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
 import logging
+import os
 
 BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 DB_NAME = DATA_DIR / "softly.db"
+
+
+#.env 放本机配置（代理端口 / 控制密钥 / 策略组名），它本身不进 git
+def _load_env(path: Path) -> None:
+    if not path.exists():
+        return
+    for line in path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        value = value.strip().strip('"').strip("'")
+        #真实环境变量优先于 .env
+        os.environ.setdefault(key.strip(), value)
+
+
+_load_env(BASE_DIR / ".env")
 
 # 翻页上限：target.max_pages 可以再小，但不能超过这个硬上限
 MAX_PAGES_HARD = 50
@@ -13,11 +31,12 @@ DEFAULT_MAX_PAGES = 1
 DEFAULT_FETCH_DETAIL = False
 
 # ================== 代理（Clash 内核）==================
-PROXY_HTTP   = "http://127.0.0.1:7897"    # Clash Verge 混合端口（设置→端口设置），给 httpx / curl_cffi / playwright
-PROXY_SOCKS  = "socks5://127.0.0.1:7891"  # 只有需要 UDP/QUIC 时才用
-CLASH_API    = "http://127.0.0.1:9097"    # Verge → 设置 → 外部控制（本机 9097）
-CLASH_SECRET = "set-your-secret"           # 与 Verge「API 访问密钥」一致；留空表示不带认证
-CLASH_GROUP  = "🚀 节点选择"                # 换节点用的策略组名（本机订阅的主选择组）
+#本机相关的都从 .env 读；下面只是缺省值
+PROXY_HTTP   = os.environ.get("PROXY_HTTP", "http://127.0.0.1:7897")    # Clash Verge 混合端口
+PROXY_SOCKS  = os.environ.get("PROXY_SOCKS", "socks5://127.0.0.1:7891") # 只有需要 UDP/QUIC 时才用
+CLASH_API    = os.environ.get("CLASH_API", "http://127.0.0.1:9097")     # 设置 → 外部控制
+CLASH_SECRET = os.environ.get("CLASH_SECRET", "")                       # 与「API 访问密钥」一致；空=不带认证
+CLASH_GROUP  = os.environ.get("CLASH_GROUP", "🚀 节点选择")              # 换节点用的策略组名
 PROXY_PROBE_URL = "http://www.gstatic.com/generate_204"
 PROXY_PROBE_TIMEOUT = 3.0
 PROXY_FALLBACK_DIRECT = True              # 代理口不通但直连可出网（TUN/全局模式）时，非 DIRECT 站改走直连

@@ -28,3 +28,19 @@ main.py
 
 代理：`config.PROXY_HTTP`（默认 `127.0.0.1:7890`）。走不走 Clash 由 `Target.route` 决定，
 具体哪个域名走哪个节点交给 Clash 的规则分流，爬虫里不写分流规则。
+## 本机配置（`.env`）
+
+代理端口、外部控制地址、密钥、策略组名都在项目根目录的 `.env` 里（已在 `.gitignore`，不会提交）：
+
+```
+copy .env.example .env
+```
+
+```
+PROXY_HTTP=http://127.0.0.1:7897
+CLASH_API=http://127.0.0.1:9097
+CLASH_SECRET=
+CLASH_GROUP=🚀 节点选择
+```
+
+真实环境变量优先于 `.env`；缺省值见 [config.py](config.py)。

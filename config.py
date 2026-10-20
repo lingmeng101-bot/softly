@@ -6,11 +6,16 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 DB_NAME = DATA_DIR / "softly.db"
 
+# 翻页上限：target.max_pages 可以再小，但不能超过这个硬上限
+MAX_PAGES_HARD = 50
+DEFAULT_MAX_PAGES = 1
+
 
 @dataclass
 class Target:
     url: str = ''
     enable: bool = True
+    max_pages: int = DEFAULT_MAX_PAGES
 
     @property
     def active(self):

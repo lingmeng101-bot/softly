@@ -7,8 +7,8 @@ class Article:
     url: str
     title: str
     content: str = ""
-    source: str | None=None
-    author: str | None = None
+    source: str | None = None
+    summary: str | None = None
     publish_time: str | None = None
     dedup_key: str = ""
     content_hash: str = ""

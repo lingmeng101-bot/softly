@@ -10,10 +10,11 @@ from crawler.fetcher import (
 
 @pytest.fixture(autouse=True)
 def _reset_manual_session(monkeypatch):
-    # 测试不依赖本机 .env 中的人工验证会话
+    # 测试不依赖本机 .env 中的人工验证会话，也不继承代理熔断状态
     monkeypatch.setattr(config, "HTTP_USER_AGENT", "")
     monkeypatch.setattr(config, "HTTP_COOKIE", "")
     monkeypatch.setattr(config, "PLAYWRIGHT_STORAGE_STATE", "")
+    monkeypatch.setattr(fetcher, "_PROXY_DOWN", False)
 
 
 class FakeRes:
@@ -189,56 +190,92 @@ def test_fetch_all_tiers_fail(monkeypatch):
         fetcher.fetch("https://down.example.com/")
 
 
-def test_consecutive_connect_fails_raise_proxy_down(monkeypatch):
+def test_force_raises_proxy_down_when_proxy_unreachable(monkeypatch):
     def fail(url, headers, route):
         raise fetcher._TierFail("connect: refused")
 
     for tier in fetcher.TIERS:
         monkeypatch.setitem(fetcher._TIER_FUNCS, tier, fail)
+    # FORCE 只有代理一条 leg，连不上直接 ProxyDown，不回落直连
     with pytest.raises(fetcher.ProxyDown):
-        fetcher.fetch("https://down2.example.com/", route=config.Route.AUTO)
-
-def test_network_alive(monkeypatch):
-    seen = {}
-
-    class _R:
-        status_code = 204
-
-        def raise_for_status(self):
-            pass
-
-    def fake_get(url, **kwargs):
-        seen["url"] = url
-        seen.update(kwargs)
-        return _R()
-
-    monkeypatch.setattr(fetcher.httpx, "get", fake_get)
-    assert fetcher.network_alive("https://target.example.com/list") is True
-    assert seen["url"] == "https://target.example.com/list"   # 探测目标站，而非公网探针
-    assert seen.get("trust_env") is False                     # 不读环境代理，才是真直连探测
-
-    def boom(*args, **kwargs):
-        raise RuntimeError("no net")
-
-    monkeypatch.setattr(fetcher.httpx, "get", boom)
-    assert fetcher.network_alive("https://target.example.com/list") is False
+        fetcher.fetch("https://force.example.com/", route=config.Route.FORCE)
 
 
-def test_proxy_alive_ignores_env_proxy(monkeypatch):
-    seen = {}
+def test_auto_falls_back_to_direct_leg(monkeypatch):
+    seen = []
 
-    class _R:
-        def raise_for_status(self):
-            pass
+    def fake(url, headers, route):
+        leg = fetcher._leg_of(route)
+        seen.append(leg)
+        if leg == fetcher.LEG_PROXY:
+            raise fetcher._TierFail("connect: refused")
+        return FakeRes(text="<html>ok</html>")
 
-    def fake_get(url, **kwargs):
-        seen.update(kwargs)
-        return _R()
+    for tier in fetcher.TIERS:
+        monkeypatch.setitem(fetcher._TIER_FUNCS, tier, fake)
 
-    monkeypatch.setattr(fetcher.httpx, "get", fake_get)
-    assert fetcher.proxy_alive() is True
-    assert seen.get("trust_env") is False
-    assert seen.get("proxy") == config.PROXY_HTTP
+    fetched = fetcher.fetch("https://auto.example.com/", route=config.Route.AUTO)
+    assert fetched.tier in TIERS
+    assert fetcher.LEG_PROXY in seen and fetcher.LEG_DIRECT in seen
+    assert seen.index(fetcher.LEG_PROXY) < seen.index(fetcher.LEG_DIRECT)
+
+
+def test_auto_does_not_fall_back_on_block(monkeypatch):
+    seen = []
+
+    def fake(url, headers, route):
+        seen.append(fetcher._leg_of(route))
+        raise fetcher._TierFail("HTTP 403")
+
+    for tier in fetcher.TIERS:
+        monkeypatch.setitem(fetcher._TIER_FUNCS, tier, fake)
+
+    # 403 说明代理本身是通的，回落直连没有意义
+    with pytest.raises(fetcher.FetchFailed):
+        fetcher.fetch("https://blocked.example.com/", route=config.Route.AUTO)
+    assert seen == [fetcher.LEG_PROXY] * len(TIERS)
+
+
+def test_direct_route_never_touches_proxy(monkeypatch):
+    seen = []
+
+    def fake(url, headers, route):
+        seen.append(fetcher._leg_of(route))
+        raise fetcher._TierFail("connect: refused")
+
+    for tier in fetcher.TIERS:
+        monkeypatch.setitem(fetcher._TIER_FUNCS, tier, fake)
+
+    with pytest.raises(fetcher.FetchFailed):
+        fetcher.fetch("https://direct.example.com/", route=config.Route.DIRECT)
+    assert set(seen) == {fetcher.LEG_DIRECT}
+
+
+def test_proxy_down_short_circuits_following_sites(monkeypatch):
+    seen = []
+
+    def fake(url, headers, route):
+        leg = fetcher._leg_of(route)
+        seen.append(leg)
+        raise fetcher._TierFail("connect: refused")
+
+    for tier in fetcher.TIERS:
+        monkeypatch.setitem(fetcher._TIER_FUNCS, tier, fake)
+
+    with pytest.raises(fetcher.FetchFailed):
+        fetcher.fetch("https://first.example.com/", route=config.Route.AUTO)
+
+    seen.clear()
+    with pytest.raises(fetcher.FetchFailed):
+        fetcher.fetch("https://second.example.com/", route=config.Route.AUTO)
+    # 第一站已确认代理不通，第二站不再等代理连接超时
+    assert fetcher.LEG_PROXY not in seen
+
+
+def test_force_skipped_immediately_when_proxy_known_down(monkeypatch):
+    monkeypatch.setattr(fetcher, "_PROXY_DOWN", True)
+    with pytest.raises(fetcher.ProxyDown):
+        fetcher.fetch("https://force.example.com/", route=config.Route.FORCE)
 
 
 def test_http_clients_ignore_env_proxy(monkeypatch):
@@ -296,6 +333,12 @@ def test_close_all_resets_broken_state(monkeypatch):
     assert fetcher._pw_broken == {}
 
 
+def test_close_all_resets_proxy_down(monkeypatch):
+    monkeypatch.setattr(fetcher, "_PROXY_DOWN", True)
+    fetcher.close_all()
+    assert fetcher._PROXY_DOWN is False
+
+
 def test_browser_cached_per_route(monkeypatch):
     import types
 
@@ -328,7 +371,7 @@ def test_browser_cached_per_route(monkeypatch):
     assert direct is again and direct is not proxy
     assert len(launches) == 2
     assert "proxy" not in launches[0]
-    assert "--no-proxy-server" in launches[0]["args"]      # DIRECT 禁用浏览器系统代理
+    assert "--no-proxy-server" in launches[0]["args"]      # 直连禁用浏览器系统代理
     assert launches[1]["proxy"] == {"server": config.PROXY_HTTP}
     assert "--no-proxy-server" not in launches[1]["args"]
 
@@ -351,7 +394,7 @@ def test_cffi_session_ignores_env_proxy(monkeypatch):
     fetcher._cffi_session(config.Route.AUTO)
     fetcher.close_all()
 
-    assert captured[0]["trust_env"] is False               # DIRECT 不读 HTTP(S)_PROXY
+    assert captured[0]["trust_env"] is False               # 直连不读 HTTP(S)_PROXY
     assert captured[0]["proxies"] == {"http": "", "https": ""}   # 显式置空，覆盖 libcurl 的环境代理
     assert captured[1]["trust_env"] is False
     assert captured[1]["proxies"] == {"http": config.PROXY_HTTP, "https": config.PROXY_HTTP}

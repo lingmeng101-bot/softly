@@ -111,7 +111,7 @@ class _Resp:
 def test_rotate_node_skips_current_group_and_direct(monkeypatch):
     calls = []
 
-    def fake_get(url, headers=None, timeout=None):
+    def fake_get(url, **kwargs):
         calls.append(("get", url))
         return _Resp({"proxies": {
             "PROXY": {"type": "Selector", "all": ["A", "DIRECT", "Sub", "B"], "now": "A"},
@@ -121,7 +121,7 @@ def test_rotate_node_skips_current_group_and_direct(monkeypatch):
             "Sub": {"type": "Selector"},
         }})
 
-    def fake_put(url, headers=None, json=None, timeout=None):
+    def fake_put(url, headers=None, json=None, timeout=None, **kwargs):
         calls.append(("put", json))
         return _Resp()
 
@@ -133,14 +133,14 @@ def test_rotate_node_skips_current_group_and_direct(monkeypatch):
 
 
 def test_rotate_node_no_candidates(monkeypatch):
-    def fake_get(url, headers=None, timeout=None):
+    def fake_get(url, **kwargs):
         return _Resp({"proxies": {
             "PROXY": {"type": "Selector", "all": ["A", "DIRECT"], "now": "A"},
             "A": {"type": "Vless"},
             "DIRECT": {"type": "Direct"},
         }})
 
-    def fake_put(url, headers=None, json=None, timeout=None):
+    def fake_put(url, **kwargs):
         raise AssertionError("没有可换节点时不该 PUT")
 
     monkeypatch.setattr(fetcher.httpx, "get", fake_get)
@@ -176,18 +176,98 @@ def test_consecutive_connect_fails_raise_proxy_down(monkeypatch):
         fetcher.fetch("https://down2.example.com/", route=config.Route.AUTO)
 
 def test_network_alive(monkeypatch):
+    seen = {}
+
     class _R:
         def raise_for_status(self):
             pass
 
-    monkeypatch.setattr(fetcher.httpx, "get", lambda *args, **kwargs: _R())
+    def fake_get(url, **kwargs):
+        seen.update(kwargs)
+        return _R()
+
+    monkeypatch.setattr(fetcher.httpx, "get", fake_get)
     assert fetcher.network_alive() is True
+    assert seen.get("trust_env") is False      # 不读环境代理，才是真直连探测
 
     def boom(*args, **kwargs):
         raise RuntimeError("no net")
 
     monkeypatch.setattr(fetcher.httpx, "get", boom)
     assert fetcher.network_alive() is False
+
+
+def test_proxy_alive_ignores_env_proxy(monkeypatch):
+    seen = {}
+
+    class _R:
+        def raise_for_status(self):
+            pass
+
+    def fake_get(url, **kwargs):
+        seen.update(kwargs)
+        return _R()
+
+    monkeypatch.setattr(fetcher.httpx, "get", fake_get)
+    assert fetcher.proxy_alive() is True
+    assert seen.get("trust_env") is False
+    assert seen.get("proxy") == config.PROXY_HTTP
+
+
+def test_http_clients_ignore_env_proxy(monkeypatch):
+    captured = []
+
+    class FakeClient:
+        def __init__(self, **kwargs):
+            captured.append(kwargs)
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(fetcher.httpx, "Client", FakeClient)
+    monkeypatch.setattr(fetcher, "_clients", {})
+    fetcher._client_for(config.Route.DIRECT)
+    fetcher._client_for(config.Route.AUTO)
+    fetcher.close_all()
+    assert captured[0]["trust_env"] is False
+    assert "proxy" not in captured[0]
+    assert captured[1]["trust_env"] is False
+    assert captured[1]["proxy"] == config.PROXY_HTTP
+
+
+def test_browser_failure_isolated_per_route(monkeypatch):
+    import types
+
+    def launch(**kwargs):
+        if "proxy" in kwargs:
+            raise RuntimeError("proxy browser failed")
+        return object()
+
+    class FakePW:
+        chromium = types.SimpleNamespace(launch=launch)
+
+        def stop(self):
+            pass
+
+    monkeypatch.setattr(fetcher, "sync_playwright", lambda: types.SimpleNamespace(start=lambda: FakePW()))
+    monkeypatch.setattr(fetcher, "_pw", None)
+    monkeypatch.setattr(fetcher, "_pw_browsers", {})
+    monkeypatch.setattr(fetcher, "_pw_broken", {})
+
+    with pytest.raises(fetcher._TierFail):
+        fetcher._ensure_browser(config.Route.AUTO)
+    assert "proxy" in fetcher._pw_broken
+    # 代理浏览器失败不应影响直连浏览器
+    assert fetcher._ensure_browser(config.Route.DIRECT) is not None
+
+
+def test_close_all_resets_broken_state(monkeypatch):
+    monkeypatch.setattr(fetcher, "_pw_broken", {"proxy": "boom"})
+    monkeypatch.setattr(fetcher, "_pw_browsers", {})
+    monkeypatch.setattr(fetcher, "_pw", None)
+    fetcher.close_all()
+    assert fetcher._pw_broken == {}
+
 
 def test_browser_cached_per_route(monkeypatch):
     import types
@@ -212,7 +292,7 @@ def test_browser_cached_per_route(monkeypatch):
     monkeypatch.setattr(fetcher, "sync_playwright", lambda: types.SimpleNamespace(start=lambda: FakePW()))
     monkeypatch.setattr(fetcher, "_pw", None)
     monkeypatch.setattr(fetcher, "_pw_browsers", {})
-    monkeypatch.setattr(fetcher, "_pw_broken", None)
+    monkeypatch.setattr(fetcher, "_pw_broken", {})
 
     direct = fetcher._ensure_browser(config.Route.DIRECT)
     proxy = fetcher._ensure_browser(config.Route.AUTO)

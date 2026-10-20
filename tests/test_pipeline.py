@@ -364,3 +364,15 @@ def test_fetch_detail_empty_text_marks_empty(tmp_path, monkeypatch):
     assert stats.added == 1
     assert conn.execute("select access_status from articles").fetchone()[0] == "empty"
     conn.close()
+
+
+def test_dict_content_is_flattened(tmp_path, monkeypatch):
+    item = dict(ITEM, content={"rendered": "正文内容"})
+    monkeypatch.setattr(pipeline, "looks_like_shell", lambda res: False)
+    monkeypatch.setattr(pipeline, "fetch", lambda url, **kw: fetched(FakeRes(text="<html>ok</html>")))
+    monkeypatch.setattr(pipeline, "get_parser", lambda url: make_mod(lambda payload, source: [item]))
+    conn = db(tmp_path, monkeypatch)
+    stats = pipeline.crawl_and_save(target(), conn)
+    assert stats.added == 1
+    assert conn.execute("select content from articles").fetchone()[0] == "正文内容"
+    conn.close()

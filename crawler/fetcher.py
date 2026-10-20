@@ -154,6 +154,7 @@ def proxy_alive() -> bool:
             config.PROXY_PROBE_URL,
             proxy=config.PROXY_HTTP,
             timeout=config.PROXY_PROBE_TIMEOUT,
+            trust_env=False,
         ).raise_for_status()
     except Exception as e:
         log.error("[proxy] probe FAILED timeout=%.1fs (%s) → 跳过非 DIRECT 站点",
@@ -167,7 +168,8 @@ def network_alive() -> bool:
     # 直连出口探测：用于 TUN / 全局模式下代理端口不可用的场景
     t0 = time.perf_counter()
     try:
-        httpx.get(config.PROXY_PROBE_URL, timeout=config.PROXY_PROBE_TIMEOUT).raise_for_status()
+        httpx.get(config.PROXY_PROBE_URL, timeout=config.PROXY_PROBE_TIMEOUT,
+                  trust_env=False).raise_for_status()
     except Exception as e:
         log.error("[net] 直连探活失败 (%s)", _short(e))
         return False
@@ -187,6 +189,7 @@ def _client_for(route: Route) -> httpx.Client:
             default_encoding=autodetect,
             timeout=httpx.Timeout(connect=5, read=10, write=10, pool=5),
             follow_redirects=True,
+            trust_env=False,   # 不读取 HTTP(S)_PROXY 环境变量，DIRECT 才是真直连
         )
         if key == "proxy":
             kw["proxy"] = config.PROXY_HTTP
@@ -364,14 +367,15 @@ def _tier_httpcloak(url: str, headers, route: Route):
 
 _pw = None
 _pw_browsers: dict[str, object] = {}
-_pw_broken: str | None = None
+_pw_broken: dict[str, str] = {}
 
 
 def _ensure_browser(route: Route):
-    global _pw, _pw_broken
-    if _pw_broken:
-        raise _TierFail("playwright 不可用: " + _pw_broken)
+    global _pw
     key = "direct" if route == Route.DIRECT else "proxy"
+    broken = _pw_broken.get(key)
+    if broken:
+        raise _TierFail("playwright 不可用: " + broken)
     browser = _pw_browsers.get(key)
     if browser is not None:
         return browser
@@ -388,9 +392,9 @@ def _ensure_browser(route: Route):
         browser = _pw.chromium.launch(**kwargs)
         _pw_browsers[key] = browser
     except Exception as e:
-        _pw_broken = f"{type(e).__name__}: {_short(e)}"
-        log.warning("[降级] playwright 启动失败，后续跳过该层: %s", _short(e))
-        raise _TierFail("playwright 不可用: " + _pw_broken)
+        _pw_broken[key] = f"{type(e).__name__}: {_short(e)}"
+        log.warning("[降级] playwright 启动失败（%s），跳过该路由的该层: %s", key, _short(e))
+        raise _TierFail("playwright 不可用: " + _pw_broken[key])
     return browser
 
 
@@ -481,7 +485,8 @@ def rotate_node(group: str | None = None) -> bool:
     group = group or config.CLASH_GROUP
     headers = {"Authorization": f"Bearer {config.CLASH_SECRET}"} if config.CLASH_SECRET else {}
     try:
-        r = httpx.get(f"{config.CLASH_API}/proxies", headers=headers, timeout=5)
+        r = httpx.get(f"{config.CLASH_API}/proxies", headers=headers, timeout=5,
+                      trust_env=False)
         r.raise_for_status()
         proxies = r.json().get("proxies") or {}
         data = proxies.get(group) or {}
@@ -497,7 +502,7 @@ def rotate_node(group: str | None = None) -> bool:
             return False
         nxt = candidates[0]
         httpx.put(f"{config.CLASH_API}/proxies/{group}", headers=headers,
-                  json={"name": nxt}, timeout=3).raise_for_status()
+                  json={"name": nxt}, timeout=3, trust_env=False).raise_for_status()
         log.warning("换节点: %s  %s → %s", group, cur, nxt)
         return True
     except Exception as e:
@@ -581,6 +586,7 @@ def close_all() -> None:
         except Exception:
             pass
     _pw_browsers.clear()
+    _pw_broken.clear()   # 允许下次重新尝试启动
     if _pw is not None:
         try:
             _pw.stop()

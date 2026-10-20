@@ -40,6 +40,15 @@ def as_dict(item) -> dict:
     return asdict(item) if is_dataclass(item) else item
 
 
+def as_text(value) -> str:
+    # 解析器可能返回嵌套字段（如 {"rendered": ...}），入库与哈希前统一转文本
+    if isinstance(value, dict):
+        value = value.get("rendered") or value.get("text") or value.get("value")
+    if value is None:
+        return ""
+    return value if isinstance(value, str) else str(value)
+
+
 def crawl_and_save(target, conn, route=None) -> CrawlStats:
     stats = CrawlStats()
     url = target.url
@@ -130,13 +139,14 @@ def crawl_and_save(target, conn, route=None) -> CrawlStats:
         # 最终校验：缺少 url 或 title 的条目不入库
         for item in items:
             row = as_dict(item)
-            link = str(row.get("url") or "").strip()
-            title = str(row.get("title") or "").strip()
+            link = as_text(row.get("url")).strip()
+            title = as_text(row.get("title")).strip()
             if not link or not title:
                 stats.bad += 1
                 continue
             key = dedup_key(link)
-            chash = content_hash(title, row.get("content") or "")
+            content = as_text(row.get("content"))
+            chash = content_hash(title, content)
             old_hash, old_status = saved_state(conn, key)
             if key in seen:
                 stats.skipped += 1
@@ -152,7 +162,6 @@ def crawl_and_save(target, conn, route=None) -> CrawlStats:
                 continue
             seen.add(key)
 
-            content = row.get("content") or ""
             item_status, item_err = access_status, error_msg
             # 详情页仅对新条目抓取；站点未实现 parse_detail 时跳过
             if target.fetch_detail:
@@ -183,9 +192,9 @@ def crawl_and_save(target, conn, route=None) -> CrawlStats:
                     conn,
                     source=host_of(link),
                     url=link,
-                    publish_time=row.get("publish_time"),
+                    publish_time=as_text(row.get("publish_time")) or None,
                     title=title,
-                    summary=row.get("summary"),
+                    summary=as_text(row.get("summary")) or None,
                     content=content,
                     access_status=item_status,
                     dedup_key=key,

@@ -32,3 +32,13 @@ def test_auto_json_maps_time_and_content():
     assert items[0].publish_time == "2026-01-02"
     assert items[0].content == "正文"
     assert items[1].url == "https://a.example.com/y"
+
+def test_auto_json_flattens_nested_fields():
+    data = {"posts": [
+        {"title": {"rendered": "标题"}, "link": "/a", "content": {"rendered": "正文"}},
+        {"title": {"rendered": "标题2"}, "link": "/b", "content": {"rendered": "正文2"}},
+    ]}
+    items = generic.auto_json(data, "https://wp.example.com/wp-json/wp/v2/x")
+    assert items[0].title == "标题"
+    assert items[0].content == "正文"
+    assert items[1].content == "正文2"

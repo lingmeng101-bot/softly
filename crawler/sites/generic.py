@@ -32,6 +32,15 @@ def _pick(obj: dict, std: str):
     return None
 
 
+def _text(v) -> str:
+    # 兼容 {"rendered": ...} 一类嵌套字段
+    if isinstance(v, dict):
+        v = v.get("rendered") or v.get("text") or v.get("value")
+    if isinstance(v, (list, tuple)):
+        v = " ".join(_text(x) for x in v)
+    return "" if v is None else str(v).strip()
+
+
 def find_list(data: Any) -> Optional[List[Dict[str, Any]]]:
     best, best_score = None, 0
 
@@ -67,9 +76,9 @@ def auto_json(data, source):
             continue
         url = urljoin(source, str(raw).strip())
         result.append(Article(source=source, url=url,
-                              title=_pick(item, "title") or "",
-                              publish_time=_pick(item, "time"),
-                              content=_pick(item, "content") or ""))
+                              title=_text(_pick(item, "title")),
+                              publish_time=_text(_pick(item, "time")) or None,
+                              content=_text(_pick(item, "content"))))
     return result
 
 

@@ -294,8 +294,11 @@ def _tier_httpx(url: str, headers, route):
         raise _TierFail(f"HTTP {e.response.status_code}")
     except httpx.ConnectError as e:
         raise _TierFail("connect: " + _short(e))
+    except httpx.ConnectTimeout as e:
+        raise _TierFail("connect: " + _short(e))
     except httpx.TimeoutException as e:
-        raise _TierFail("connect: timeout " + _short(e))
+        # 读取/写入超时说明连接已建立，不能算作出口不通
+        raise _TierFail("timeout: " + _short(e))
     except httpx.RequestError as e:
         raise _TierFail("error: " + type(e).__name__)
     _classify(res, "httpx")
@@ -593,8 +596,8 @@ def _fetch_leg(url: str, headers, min_tier, leg: str, rotate_on_block: bool,
         return Fetched(res, tier, attempts)
 
     # 全部层级失败且原因为 403 时换节点，再按原顺序重试一遍
-    # 这里不绑定具体层级：换节点是代理侧动作，与装了哪些可选包无关
-    if rotate_on_block and "HTTP 403" in last_reason:
+    # 只对代理 leg 换节点：直连失败与 Clash 节点无关
+    if leg == LEG_PROXY and rotate_on_block and "HTTP 403" in last_reason:
         if rotate_node(rotate_group):
             for tier in TIERS[TIER_INDEX[start]:]:
                 try:

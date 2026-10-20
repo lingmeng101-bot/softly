@@ -103,6 +103,46 @@ TARGETS:dict[str, Target] ={
     "xsyu":Target("https://www.xsyu.edu.cn/xwzx/tzgg.htm", route=Route.DIRECT),
     "30aitool.com":Target("https://www.30aitool.com/wp-json/wp/v2/tool"),
 }
+# skills.qiaomu.ai：按分类抓技能列表（详情页不抓）
+QIAOMU_CATEGORIES = (
+    "install-react",
+    "install-nextjs",
+    "install-design",
+    "install-mobile",
+    "install-agent-workflows",
+    "install-databases",
+    "install-testing",
+    "install-marketing",
+    "community-tools",
+    "community-business",
+    "community-development",
+    "community-testing-security",
+    "community-data-ai",
+    "community-devops",
+    "community-debugging",
+    "community-sales-marketing",
+    "community-system-admin",
+    "community-code-quality",
+    "community-llm-ai",
+    "community-git-workflows",
+    "community-productivity-tools",
+    "community-documents",
+    "community-architecture-patterns",
+    "community-project-management",
+    "community-testing",
+    "community-finance-investment",
+    "qiaomu-agent",
+    "qiaomu-dev",
+    "qiaomu-content",
+    "qiaomu-visual",
+    "qiaomu-media",
+    "qiaomu-research",
+    "qiaomu-productivity",
+)
+
+for _slug in QIAOMU_CATEGORIES:
+    TARGETS[f"qiaomu-{_slug}"] = Target(f"https://skills.qiaomu.ai/categories/{_slug}/")
+del _slug
 # 随机 UA 与默认请求头
 USER_AGENTS = [
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/154.0.0.0 Safari/537.36",

@@ -36,3 +36,41 @@ def test_get_parser_routes_to_ezsub():
 
 def test_host_of_ezsub():
     assert host_of("https://ezsubxiaoali.ezsub.com/zh-cn/subscriptions") == "ezsubxiaoali.ezsub.com"
+
+
+DETAIL_HTML = """
+<html><body>
+<h1 class="detail__HeroTitle-sc-19dihxg-17 x">Discord</h1>
+<p class="detail__HeroSubTitle-sc-19dihxg-18 y">DiscordNitro BASIC一个月会员充值</p>
+<div class="detail__StyledSkuBox-sc-19dihxg-30 a">
+  <h2 class="detail__StyledTitle-sc-19dihxg-27 b">套餐</h2>
+  <div class="sku-list">
+    <div class="sku-item"><div class="content"><span class="name">DiscordNitro</span></div></div>
+    <div class="sku-item"><div class="content"><span class="name">DiscordNitro BASIC</span></div></div>
+  </div>
+</div>
+<div class="detail__StyledSkuBox-sc-19dihxg-30 c leafCardBox">
+  <h2 class="detail__StyledTitle-sc-19dihxg-27 b">时长</h2>
+  <div class="sku-list">
+    <div class="sku-item isLeaf"><div class="content"><span class="name">12个月</span>
+      <span class="price-box"><span class="price">￥ 199.00</span>
+      <span class="promotion-discount">1%优惠</span></span></div></div>
+  </div>
+</div>
+<section id="product-details"><h2>商品详情</h2>
+  <div class="detail__DetailContent-sc-19dihxg-36 d"><p>购买前须知</p><p>本商品交付兑换链接</p></div>
+</section>
+</body></html>
+"""
+
+
+def test_parse_detail_extracts_sku_and_content():
+    text = ezsub.parse_detail(DETAIL_HTML)
+    assert "Discord" in text
+    assert "DiscordNitro BASIC一个月会员充值" in text
+    assert "12个月" in text and "￥ 199.00" in text and "1%优惠" in text
+    assert "购买前须知" in text and "本商品交付兑换链接" in text
+
+
+def test_parse_detail_returns_blocked_on_challenge():
+    assert ezsub.parse_detail("<html><title>Just a moment...</title></html>") == "blocked"

@@ -20,10 +20,6 @@ def test_route_defaults():
 def test_default_fetch_detail():
     assert Target("https://a.com").fetch_detail is False
 
-def test_proxy_fallback_flag():
-    import config
-    assert config.PROXY_FALLBACK_DIRECT is True
-
 def test_load_env_file(tmp_path, monkeypatch):
     import os
     import config

@@ -1,16 +1,16 @@
 flowchart TD
-    A["main.py<br/>setup_logger / init_db"] --> B{"proxy_alive？<br/>Clash 混合端口可连"}
-    B -- "是" --> G{"遍历 config.TARGETS"}
-    B -- "否" --> G
-    G -- "下一个 target" --> R{"代理可用？"}
-    R -- "是" --> H["route = target.route"]
-    R -- "否" --> E["AUTO：逐站探测直连可达性<br/>可达 → 走直连，不可达 → 跳过<br/>FORCE：跳过（不回落直连）<br/>DIRECT：保持直连"]
-    E --> H
-    H --> I{"url 有效<br/>且 page &lt; max_pages<br/>且未访问？"}
+    A["main.py<br/>setup_logger / init_db"] --> G{"遍历 config.TARGETS"}
+    G -- "下一个 target" --> R["route = target.route"]
+    R --> LB{"本轮代理已熔断？<br/>_PROXY_DOWN"}
+    LB -- "否" --> LEGS["展开 leg 序列<br/>AUTO：proxy → direct<br/>DIRECT：direct<br/>FORCE：proxy"]
+    LB -- "是" --> LEGS2["AUTO：direct；DIRECT：direct<br/>FORCE：直接失败"]
+    LEGS --> L["取下一个 leg，进入四层降级"]
+    LEGS2 --> L
+    L --> I{"url 有效<br/>且 page &lt; max_pages<br/>且未访问？"}
     I -- "否" --> G
     I -- "是" --> T0
 
-    subgraph FETCH["crawler/fetcher.py · 四层降级（缺失层自动跳过）"]
+    subgraph FETCH["单 leg 的四层降级（缺失层自动跳过）"]
         direction TB
         T0["T0 httpx：fetch 入口<br/>随机 UA + tenacity 重试"] --> Q0{"pass？"}
         Q0 -- "是" --> RET["Fetched(res, tier, attempts)"]
@@ -26,6 +26,12 @@ flowchart TD
         Q3 -- "否" --> ERR["FetchFailed / ProxyDown"]
         ERR -. "rotate_on_block=True 且 403（可选）<br/>rotate_node → 重试 T1" .-> T1
     end
+
+    ERR --> LEGFAIL{"proxy leg 且全部是连接类失败？"}
+    LEGFAIL -- "是" --> CB["置 _PROXY_DOWN<br/>AUTO 换 direct leg 重试"]
+    LEGFAIL -- "否" --> TF["FetchFailed<br/>单站失败，继续下一个 target"]
+    CB --> L
+    TF --> G
 
     RET --> S["sniff：json / html / xml / text"]
     S --> K{"内容类型"}
@@ -73,5 +79,4 @@ flowchart TD
     NP -- "存在且无环路" --> I
     NP -- "无下一页 / 环路" --> DONE["本目标结束<br/>CrawlStats"]
     KD --> DONE
-    ERR --> DONE
     DONE --> G

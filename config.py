@@ -10,6 +10,7 @@ DB_NAME = DATA_DIR / "softly.db"
 # 翻页上限：target.max_pages 可以再小，但不能超过这个硬上限
 MAX_PAGES_HARD = 50
 DEFAULT_MAX_PAGES = 1
+DEFAULT_FETCH_DETAIL = False
 
 # ================== 代理（Clash 内核）==================
 PROXY_HTTP   = "http://127.0.0.1:7890"    # mixed-port，给 httpx / curl_cffi / playwright
@@ -50,6 +51,7 @@ class Target:
     url: str = ''
     enable: bool = True
     max_pages: int = DEFAULT_MAX_PAGES
+    fetch_detail: bool = DEFAULT_FETCH_DETAIL
     route: Route = Route.AUTO
     proxy_group: str | None = None  # 配合 FORCE / 换节点
 

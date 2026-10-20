@@ -46,7 +46,7 @@ def parse_list(html: str, source: str) -> list[dict]:
             continue
 
         records.append({
-            "day": full_day,
+            "publish_time": full_day,
             "title": title,
             "summary": summary,
             "url": urljoin(source, href),

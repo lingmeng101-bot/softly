@@ -1,3 +1,5 @@
+import pytest
+
 import config
 from crawler import fetcher
 from crawler.fetcher import (
@@ -92,3 +94,60 @@ def test_browser_response_interface():
         pass
     else:
         raise AssertionError("404 应该抛 FetchFailed")
+
+class _Resp:
+    def __init__(self, data=None, status=200):
+        self._data = data or {}
+        self.status_code = status
+
+    def raise_for_status(self):
+        if self.status_code >= 400:
+            raise RuntimeError("http error")
+
+    def json(self):
+        return self._data
+
+
+def test_rotate_node_success(monkeypatch):
+    calls = []
+
+    def fake_get(url, headers=None, timeout=None):
+        calls.append(("get", url))
+        return _Resp({"all": [{"name": "A"}, {"name": "B"}], "now": "A"})
+
+    def fake_put(url, headers=None, json=None, timeout=None):
+        calls.append(("put", json))
+        return _Resp()
+
+    monkeypatch.setattr(fetcher.httpx, "get", fake_get)
+    monkeypatch.setattr(fetcher.httpx, "put", fake_put)
+    assert fetcher.rotate_node("PROXY") is True
+    assert calls[1] == ("put", {"name": "B"})
+
+
+def test_rotate_node_failure_is_silent(monkeypatch):
+    def boom(*args, **kwargs):
+        raise RuntimeError("clash 没开")
+
+    monkeypatch.setattr(fetcher.httpx, "get", boom)
+    assert fetcher.rotate_node("PROXY") is False
+
+
+def test_fetch_all_tiers_fail(monkeypatch):
+    def fail(url, headers, route):
+        raise fetcher._TierFail("HTTP 403")
+
+    for tier in fetcher.TIERS:
+        monkeypatch.setitem(fetcher._TIER_FUNCS, tier, fail)
+    with pytest.raises(fetcher.FetchFailed):
+        fetcher.fetch("https://down.example.com/")
+
+
+def test_consecutive_connect_fails_raise_proxy_down(monkeypatch):
+    def fail(url, headers, route):
+        raise fetcher._TierFail("connect: refused")
+
+    for tier in fetcher.TIERS:
+        monkeypatch.setitem(fetcher._TIER_FUNCS, tier, fail)
+    with pytest.raises(fetcher.ProxyDown):
+        fetcher.fetch("https://down2.example.com/", route=config.Route.AUTO)

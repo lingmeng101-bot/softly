@@ -57,7 +57,8 @@ def crawl_and_save(target, conn) -> CrawlStats:
         visited.add(url)
 
         try:
-            f = fetch(url, route=target.route)
+            f = fetch(url, route=target.route, proxy_group=target.proxy_group,
+                      rotate_on_block=config.PLAYWRIGHT_ROTATE_ON_BLOCK)
         except ProxyDown as e:
             log.error("代理不可用，本轮结束: %s (%s)", url, e)
             break
@@ -116,7 +117,7 @@ def crawl_and_save(target, conn) -> CrawlStats:
             nxt = tiers[tiers.index(f.tier) + 1]
             log.warning("内容为空，改用 %s 重取: %s", nxt, url)
             try:
-                f = fetch(url, min_tier=nxt, route=target.route)
+                f = fetch(url, min_tier=nxt, route=target.route, proxy_group=target.proxy_group)
                 res = f.res
                 items = mod.parse_list(res.text, source=str(res.url))
             except Exception as e:
@@ -139,11 +140,35 @@ def crawl_and_save(target, conn) -> CrawlStats:
             if key in seen:
                 stats.skipped += 1
                 continue
-            #hash 没变且上次是正常状态，跳过；上次是异常状态，允许重抓覆盖
-            if old_hash == chash and old_status not in RETRYABLE:
+            #开了 fetch_detail 时 content_hash 存的是详情页正文，跟列表页算出来的对不上，
+            #所以改用「URL 已存在且状态正常」判重，避免每次重跑都重抓一遍详情页
+            if target.fetch_detail:
+                skip = old_hash is not None and old_status not in RETRYABLE
+            else:
+                skip = old_hash == chash and old_status not in RETRYABLE
+            if skip:
                 stats.skipped += 1
                 continue
             seen.add(key)
+
+            content = row.get("content") or ""
+            item_status, item_err = access_status, error_msg
+            #详情页：只对新条目抓，天然限流；站点没 parse_detail 就跳过
+            if target.fetch_detail:
+                detail_fn = getattr(mod, "parse_detail", None)
+                if detail_fn:
+                    try:
+                        d = fetch(link, route=target.route)
+                        detail_text = detail_fn(d.res.text)
+                        if detail_text == "blocked":
+                            item_status = "blocked"
+                            content = ""
+                            item_err = item_err or "详情页被拦（返回系统提示页）"
+                        else:
+                            content = detail_text or ""
+                    except Exception as e:
+                        log.warning("详情页失败 url=%s (%s)", link, e)
+                chash = content_hash(title, content)
 
             try:
                 save_article(
@@ -153,14 +178,18 @@ def crawl_and_save(target, conn) -> CrawlStats:
                     publish_time=row.get("publish_time"),
                     title=title,
                     summary=row.get("summary"),
-                    content=row.get("content") or "",
-                    access_status=access_status,
+                    content=content,
+                    access_status=item_status,
                     dedup_key=key,
                     content_hash=chash,
-                    error_msg=error_msg,
+                    error_msg=item_err,
                 )
-                stats.added += 1
-                log.info("  [+] %s 【%s】%s", host_of(link), row.get("publish_time") or "-", title[:30])
+                if item_status == "blocked":
+                    stats.blocked += 1
+                    log.warning("  [!] %s 【%s】%s", host_of(link), row.get("publish_time") or "-", title[:30])
+                else:
+                    stats.added += 1
+                    log.info("  [+] %s 【%s】%s", host_of(link), row.get("publish_time") or "-", title[:30])
             except sqlite3.Error as e:
                 #单条入库失败不能中断整个 target
                 stats.bad += 1
@@ -179,6 +208,6 @@ def crawl_and_save(target, conn) -> CrawlStats:
         url = nxt_url
         page += 1
 
-    log.info("本目标：新增 %d，跳过 %d，异常 %d，解析错 %d",
-             stats.added, stats.skipped, stats.bad, stats.parse_error)
+    log.info("本目标：新增 %d，拦截 %d，跳过 %d，异常 %d，解析错 %d",
+             stats.added, stats.blocked, stats.skipped, stats.bad, stats.parse_error)
     return stats

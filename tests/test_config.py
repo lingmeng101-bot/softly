@@ -16,3 +16,6 @@ def test_route_defaults():
     assert TARGETS["books"].route == Route.AUTO
     assert TARGETS["ahszu"].route == Route.DIRECT
     assert TARGETS["xsyu"].route == Route.DIRECT
+
+def test_default_fetch_detail():
+    assert Target("https://a.com").fetch_detail is False

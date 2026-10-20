@@ -3,7 +3,7 @@ import types
 import config
 import pipeline
 import storage
-from crawler.fetcher import TIERS, Fetched
+from crawler.fetcher import TIERS, FetchFailed, Fetched
 from models import Article
 
 
@@ -223,4 +223,89 @@ def test_content_downgrade_once(tmp_path, monkeypatch):
     stats = pipeline.crawl_and_save(target(), conn)
     assert stats.added == 1
     assert len(calls) == 2 and calls[0] is None and calls[1] == TIERS[1]
+    conn.close()
+
+def _detail_fetch(detail_calls, detail_html="<html>detail</html>"):
+    def fake_fetch(url, **kw):
+        if url.startswith("https://a.com/"):
+            detail_calls.append(url)
+            return fetched(FakeRes(text=detail_html, url=url))
+        return fetched(FakeRes(text="<html>ok</html>"))
+    return fake_fetch
+
+
+def test_fetch_detail_content_saved(tmp_path, monkeypatch):
+    mod = make_mod(lambda payload, source: [ITEM])
+    mod.parse_detail = lambda html: "正文内容"
+    monkeypatch.setattr(pipeline, "fetch", _detail_fetch([]))
+    monkeypatch.setattr(pipeline, "looks_like_shell", lambda res: False)
+    monkeypatch.setattr(pipeline, "get_parser", lambda url: mod)
+    conn = db(tmp_path, monkeypatch)
+    stats = pipeline.crawl_and_save(target(fetch_detail=True), conn)
+    assert (stats.added, stats.blocked) == (1, 0)
+    row = conn.execute("select content, access_status from articles").fetchone()
+    assert row[0] == "正文内容" and row[1] == "normal"
+    conn.close()
+
+
+def test_fetch_detail_blocked_is_saved_and_retryable(tmp_path, monkeypatch):
+    mod = make_mod(lambda payload, source: [ITEM])
+    mod.parse_detail = lambda html: "blocked"
+    monkeypatch.setattr(pipeline, "fetch", _detail_fetch([], "<html>系统提示</html>"))
+    monkeypatch.setattr(pipeline, "looks_like_shell", lambda res: False)
+    monkeypatch.setattr(pipeline, "get_parser", lambda url: mod)
+    conn = db(tmp_path, monkeypatch)
+    stats = pipeline.crawl_and_save(target(fetch_detail=True), conn)
+    assert (stats.added, stats.blocked) == (0, 1)
+    row = conn.execute("select content, access_status, error_msg from articles").fetchone()
+    assert row[0] == "" and row[1] == "blocked" and row[2]
+    assert stats.added + stats.skipped + stats.bad + stats.blocked + stats.parse_error == 1
+    conn.close()
+
+
+def test_fetch_detail_failure_keeps_list_content(tmp_path, monkeypatch):
+    item = dict(ITEM, content="列表正文")
+
+    def fake_fetch(url, **kw):
+        if url.startswith("https://a.com/"):
+            raise FetchFailed("detail down")
+        return fetched(FakeRes(text="<html>ok</html>"))
+
+    mod = make_mod(lambda payload, source: [item])
+    mod.parse_detail = lambda html: "x"
+    monkeypatch.setattr(pipeline, "fetch", fake_fetch)
+    monkeypatch.setattr(pipeline, "looks_like_shell", lambda res: False)
+    monkeypatch.setattr(pipeline, "get_parser", lambda url: mod)
+    conn = db(tmp_path, monkeypatch)
+    stats = pipeline.crawl_and_save(target(fetch_detail=True), conn)
+    assert stats.added == 1
+    assert conn.execute("select content from articles").fetchone()[0] == "列表正文"
+    conn.close()
+
+
+def test_fetch_detail_without_parse_detail_is_skipped(tmp_path, monkeypatch):
+    detail_calls = []
+    mod = make_mod(lambda payload, source: [ITEM])          # 没有 parse_detail
+    monkeypatch.setattr(pipeline, "fetch", _detail_fetch(detail_calls))
+    monkeypatch.setattr(pipeline, "looks_like_shell", lambda res: False)
+    monkeypatch.setattr(pipeline, "get_parser", lambda url: mod)
+    conn = db(tmp_path, monkeypatch)
+    stats = pipeline.crawl_and_save(target(fetch_detail=True), conn)
+    assert stats.added == 1
+    assert detail_calls == []
+    conn.close()
+
+
+def test_fetch_detail_second_run_does_not_refetch(tmp_path, monkeypatch):
+    detail_calls = []
+    mod = make_mod(lambda payload, source: [ITEM])
+    mod.parse_detail = lambda html: "正文内容"
+    monkeypatch.setattr(pipeline, "fetch", _detail_fetch(detail_calls))
+    monkeypatch.setattr(pipeline, "looks_like_shell", lambda res: False)
+    monkeypatch.setattr(pipeline, "get_parser", lambda url: mod)
+    conn = db(tmp_path, monkeypatch)
+    pipeline.crawl_and_save(target(fetch_detail=True), conn)
+    second = pipeline.crawl_and_save(target(fetch_detail=True), conn)
+    assert (second.added, second.skipped) == (0, 1)
+    assert len(detail_calls) == 1
     conn.close()

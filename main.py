@@ -28,13 +28,14 @@ def main() -> None:
             if not alive and target.route != config.Route.DIRECT:
                 log.error("代理不可用，跳过国外站: %s", name)
                 continue
-            log.info("=== %s  %s route=%s", name, target.url, target.route)
+            log.info("=== %s  %s route=%s fetch_detail=%s",
+                     name, target.url, target.route, target.fetch_detail)
             total += crawl_and_save(target, conn)
     finally:
         conn.close()
         close_all()
-    log.info("全部跑完：新增 %d，跳过 %d，异常 %d，解析错 %d",
-             total.added, total.skipped, total.bad, total.parse_error)
+    log.info("全部跑完：新增 %d，拦截 %d（已入库），跳过 %d，异常 %d，解析错 %d",
+             total.added, total.blocked, total.skipped, total.bad, total.parse_error)
     log.info("[stats] %s", _stats_line(TIER_HITS))
 
 if __name__ == "__main__":

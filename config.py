@@ -38,9 +38,6 @@ PROXY_SOCKS  = os.environ.get("PROXY_SOCKS", "socks5://127.0.0.1:7891") # 仅在
 CLASH_API    = os.environ.get("CLASH_API", "http://127.0.0.1:9097")     # external-controller 地址
 CLASH_SECRET = os.environ.get("CLASH_SECRET", "")                       # 与「API 访问密钥」一致；为空则不携带认证头
 CLASH_GROUP  = os.environ.get("CLASH_GROUP", "🚀 节点选择")              # 节点切换使用的策略组名
-PROXY_PROBE_URL = "http://www.gstatic.com/generate_204"
-PROXY_PROBE_TIMEOUT = 3.0
-PROXY_FALLBACK_DIRECT = True              # 代理端口不可用但直连可出网时，非 DIRECT 站点改走直连
 
 # ---- 降级链 ----
 FETCH_TIERS = ("httpx", "curl_cffi", "httpcloak", "playwright")
@@ -69,9 +66,9 @@ PLAYWRIGHT_ROTATE_ON_BLOCK = False
 
 
 class Route(StrEnum):
-    AUTO   = "auto"       # 经 Clash 由规则分流（默认）
-    DIRECT = "direct"     # 不设置代理，直连，绕过 Clash
-    FORCE  = "force"      # 经 Clash，禁止回落 DIRECT
+    AUTO   = "auto"       # 尝试序列：代理 → 直连；代理连接失败才回落直连
+    DIRECT = "direct"     # 尝试序列：只直连
+    FORCE  = "force"      # 尝试序列：只走代理，不回落直连
 
 
 @dataclass

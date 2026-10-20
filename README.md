@@ -7,7 +7,7 @@
 ```
 main.py
   ├─ setup_logger / init_db（自动创建 data/）
-  ├─ proxy_alive（检测 Clash 可用性；不可用时逐站探测目标站直连可达性，AUTO 可达则回落直连，FORCE 跳过）
+  ├─ 路由不做预检：target.route 直接展开成尝试序列
   └─ config.TARGETS（站点列表：url / max_pages / fetch_detail / route）
        └─ pipeline.crawl_and_save(target, conn)
             ① 取数       crawler/fetcher.py   四层降级：httpx → curl_cffi → httpcloak → playwright
@@ -42,9 +42,9 @@ playwright 需额外执行 `playwright install chromium`。
 
 ## 代理
 
-是否经过代理由 `Target.route` 控制：`AUTO` 经 Clash 由规则分流；`DIRECT` 不设置代理；
-`FORCE` 经 Clash 且不回落直连。具体域名分流由 Clash 规则负责，代码中不维护分流规则。
-缺省代理地址见 `config.PROXY_HTTP`。
+`Target.route` 直接展开成尝试序列，不做任何事前探测：`AUTO` = 代理 → 直连（代理连不上才回落）、
+`DIRECT` = 只直连、`FORCE` = 只走代理。代理一旦在某一站被判定连不上，本轮后续站点不再尝试代理。
+具体域名分流由 Clash 规则负责，代码中不维护分流规则。缺省代理地址见 `config.PROXY_HTTP`。
 
 可选：`Target.rotate_group` 指定全部层级失败且原因为 403 时用于切换节点的策略组
 （缺省 `config.CLASH_GROUP`）；该字段不绑定正常请求的路由。

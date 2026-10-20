@@ -3,5 +3,12 @@ tenacity
 beautifulsoup4
 lxml
 charset-normalizer
-pytest
 brotli
+
+# 降级链（缺任何一个都能跑，程序会自动跳过该层）
+curl_cffi>=0.6
+httpcloak
+playwright
+
+# 测试
+pytest

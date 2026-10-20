@@ -355,3 +355,71 @@ def test_looks_like_shell_link_variants():
     bare_links = "<html><body>" + "<a>t</a>" * 6 + "y" * 4000 + "</body></html>"
     assert looks_like_shell(FakeRes(text=newline_links)) is False
     assert looks_like_shell(FakeRes(text=bare_links)) is False
+
+
+class _FakePage:
+    def __init__(self, contents, status=403):
+        self._contents = list(contents)
+        self._idx = 0
+        self.url = "https://cf.example.com/"
+        self.status = status
+        self.waits = 0
+
+    def goto(self, url, **kwargs):
+        import types
+        return types.SimpleNamespace(status=self.status,
+                                     headers={"content-type": "text/html; charset=utf-8"})
+
+    def content(self):
+        value = self._contents[min(self._idx, len(self._contents) - 1)]
+        self._idx += 1
+        return value
+
+    def wait_for_timeout(self, ms):
+        self.waits += 1
+
+    def close(self):
+        pass
+
+
+class _FakeBrowser:
+    def __init__(self, page):
+        self.page = page
+
+    def new_page(self):
+        return self.page
+
+
+def _challenge_html():
+    return '<!doctype html><html><title>Just a moment...</title></html>'
+
+
+def _normal_html():
+    return '<!doctype html><html><title>Dashboard</title><body>ok</body></html>'
+
+
+def test_playwright_waits_for_challenge_to_clear(monkeypatch):
+    page = _FakePage([_challenge_html(), _challenge_html(), _normal_html()])
+    monkeypatch.setattr(fetcher, "_ensure_browser", lambda route: _FakeBrowser(page))
+    monkeypatch.setattr(config, "PLAYWRIGHT_CHALLENGE_WAIT", 5)
+    res = fetcher._tier_playwright("https://cf.example.com/", None, config.Route.AUTO)
+    assert res.status_code == 200
+    assert "Dashboard" in res.text
+    assert page.waits == 2
+
+
+def test_playwright_gives_up_when_challenge_stuck(monkeypatch):
+    page = _FakePage([_challenge_html()] * 10)
+    monkeypatch.setattr(fetcher, "_ensure_browser", lambda route: _FakeBrowser(page))
+    monkeypatch.setattr(config, "PLAYWRIGHT_CHALLENGE_WAIT", 3)
+    with pytest.raises(fetcher._TierFail):
+        fetcher._tier_playwright("https://cf.example.com/", None, config.Route.AUTO)
+    assert page.waits == 3
+
+
+def test_playwright_no_wait_on_normal_page(monkeypatch):
+    page = _FakePage([_normal_html()], status=200)
+    monkeypatch.setattr(fetcher, "_ensure_browser", lambda route: _FakeBrowser(page))
+    res = fetcher._tier_playwright("https://cf.example.com/", None, config.Route.AUTO)
+    assert res.status_code == 200
+    assert page.waits == 0

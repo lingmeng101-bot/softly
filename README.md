@@ -11,7 +11,7 @@ main.py
   └─ config.TARGETS（站点列表：url / max_pages / fetch_detail / route）
        └─ pipeline.crawl_and_save(target, conn)
             ① 取数       crawler/fetcher.py   四层降级：httpx → curl_cffi → httpcloak → playwright
-                         缺失或不可用的层级自动跳过；站点命中高层后本轮保持该层级
+                         缺失或不可用的层级自动跳过；站点命中高层后本轮保持该层级；T3 遇到 Cloudflare 挑战页会等待其完成（PLAYWRIGHT_CHALLENGE_WAIT）
             ② 格式判断   crawler/sniff.py     json / html / xml / text（text 类型丢弃）
             ③ 接口报错   crawler/guard.py     200 但业务 code 报错 → api_error
             ④ 选择解析器 crawler/sites/       命中专属解析器则使用，否则使用 generic

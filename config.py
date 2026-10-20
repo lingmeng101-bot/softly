@@ -58,6 +58,7 @@ HTTPCLOAK_HTTP_VERSION = "auto"           # HTTP/3 需要 UDP 中继，机场通
 PLAYWRIGHT_HEADLESS = True
 PLAYWRIGHT_WAIT = "domcontentloaded"       # 需要等 JS 的站可改 "networkidle"
 PLAYWRIGHT_TIMEOUT_MS = 20000
+PLAYWRIGHT_CHALLENGE_WAIT = 15   # 浏览器遇到 Cloudflare 挑战页时最多等待的秒数
 PLAYWRIGHT_ROTATE_ON_BLOCK = False
 
 

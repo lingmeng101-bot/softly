@@ -246,6 +246,16 @@ def _is_challenge(res) -> bool:
     return _challenge_hit(res) is not None
 
 
+_CHALLENGE_TEXT = ("just a moment", "attention required", "cf-challenge", "cf_chl_",
+                   "checking your browser")
+
+
+def _page_challenge(html: str) -> bool:
+    # 仅看首屏文本，用于判断浏览器是否还停在挑战页
+    head = (html or "")[:4000].lower()
+    return any(marker in head for marker in _CHALLENGE_TEXT)
+
+
 def looks_like_shell(res) -> bool:
     # 判断 200 响应是否为仅含占位节点的空壳页面
     ct = _header_value(res, "content-type")
@@ -414,9 +424,24 @@ def _tier_playwright(url: str, headers, route: Route):
         try:
             resp = page.goto(url, wait_until=config.PLAYWRIGHT_WAIT,
                              timeout=config.PLAYWRIGHT_TIMEOUT_MS)
+            status = resp.status if resp else 200
+            html = page.content()
+            # 挑战页返回 403 是常态，给浏览器留出执行 JS 并重载的时间
+            if status in config.BLOCKED_CODES or _page_challenge(html):
+                waited = 0
+                while waited < config.PLAYWRIGHT_CHALLENGE_WAIT:
+                    page.wait_for_timeout(1000)
+                    waited += 1
+                    html = page.content()
+                    if not _page_challenge(html):
+                        status = 200
+                        break
+                else:
+                    log.warning("[降级] playwright 挑战未通过（等待 %ss）: %s",
+                                waited, url)
             res = BrowserResponse(
-                page.content(),
-                resp.status if resp else 200,
+                html,
+                status,
                 page.url,
                 dict(resp.headers if resp else {}),
             )

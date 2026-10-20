@@ -23,3 +23,7 @@ def test_no_param():
 
 def test_non_digit():
     assert next_page_url("https://a.com/list?page=x") is None
+
+def test_offset_alias_removed():
+    assert find_param("https://a.com/list?offset=20") is None
+    assert next_page_url("https://a.com/list?offset=20") is None

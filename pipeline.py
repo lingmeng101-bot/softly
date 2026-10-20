@@ -7,6 +7,7 @@ import paginator
 from config import Log
 from crawler.fetcher import FetchFailed, ProxyDown, TIERS as FETCH_TIERS
 from crawler.fetcher import fetch, looks_like_shell
+from crawler.guard import check
 from crawler.sniff import sniff
 from crawler.sites import get_parser, host_of
 from hashing import content_hash, dedup_key
@@ -68,11 +69,32 @@ def crawl_and_save(target, conn) -> CrawlStats:
         res = f.res
         kind = sniff(res)
         payload = res.text
+        access_status, error_msg = "normal", None
+        allow_downgrade = True
+
         if kind == "json":
             try:
                 payload = res.json()
             except Exception as e:
                 log.warning("自称 json 但解析失败，按 html 处理: %s", e)
+                kind = "html"
+        elif kind == "xml":
+            #lxml 能解析 xml，按 html 走
+            pass
+        else:
+            if kind == "text":
+                log.warning("不支持的内容类型 text，跳过: %s", url)
+                stats.bad += 1
+                break
+
+        #接口报错（200 但 code 报错）在解析前统一判，专属解析器不用各写一遍
+        if isinstance(payload, (dict, list)):
+            err = check(payload)
+            if err:
+                log.warning("接口报错：%s", err)
+                access_status, error_msg = "api_error", err
+                payload = []
+                allow_downgrade = False
 
         #判断专属还是通用
         mod = get_parser(str(res.url))
@@ -82,9 +104,13 @@ def crawl_and_save(target, conn) -> CrawlStats:
         except Exception as e:
             log.exception("解析异常: %s (%s)", url, e)
             items = []
+            #解析器坏了跟 TLS 指纹无关，别让内容降级白跑 playwright
+            stats.parse_error += 1
+            access_status = "parse_error"
+            allow_downgrade = False
 
         #内容层降级：200 但只有空壳（列表靠 JS 渲染），换下一层重取一次
-        if (not items and kind == "html" and f.tier in tiers
+        if (not items and allow_downgrade and kind == "html" and f.tier in tiers
                 and tiers.index(f.tier) + 1 < len(tiers)
                 and looks_like_shell(res)):
             nxt = tiers[tiers.index(f.tier) + 1]
@@ -128,9 +154,10 @@ def crawl_and_save(target, conn) -> CrawlStats:
                     title=title,
                     summary=row.get("summary"),
                     content=row.get("content") or "",
-                    access_status="normal",
+                    access_status=access_status,
                     dedup_key=key,
                     content_hash=chash,
+                    error_msg=error_msg,
                 )
                 stats.added += 1
                 log.info("  [+] %s 【%s】%s", host_of(link), row.get("publish_time") or "-", title[:30])
@@ -152,5 +179,6 @@ def crawl_and_save(target, conn) -> CrawlStats:
         url = nxt_url
         page += 1
 
-    log.info("本目标：新增 %d，跳过 %d，异常 %d", stats.added, stats.skipped, stats.bad)
+    log.info("本目标：新增 %d，跳过 %d，异常 %d，解析错 %d",
+             stats.added, stats.skipped, stats.bad, stats.parse_error)
     return stats

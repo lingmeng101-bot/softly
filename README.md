@@ -7,7 +7,7 @@
 ```
 main.py
   ├─ setup_logger / init_db（自动创建 data/）
-  ├─ proxy_alive（检测 Clash 可用性；不可用时跳过非 DIRECT 站点，直连可出网时 AUTO 回落直连）
+  ├─ proxy_alive（检测 Clash 可用性；不可用时逐站探测目标站直连可达性，AUTO 可达则回落直连，FORCE 跳过）
   └─ config.TARGETS（站点列表：url / max_pages / fetch_detail / route）
        └─ pipeline.crawl_and_save(target, conn)
             ① 取数       crawler/fetcher.py   四层降级：httpx → curl_cffi → httpcloak → playwright
@@ -15,9 +15,9 @@ main.py
             ② 格式判断   crawler/sniff.py     json / html / xml / text（text 类型丢弃）
             ③ 接口报错   crawler/guard.py     200 但业务 code 报错 → api_error
             ④ 选择解析器 crawler/sites/       命中专属解析器则使用，否则使用 generic
-            ⑤ 解析       mod.parse_list(payload, source)；空壳 HTML 时降一层重取一次
+            ⑤ 解析       mod.parse_list(payload, source)；空壳 HTML 时降一层重取并重新判定格式
             ⑥ 最终校验   缺少 url 或 title 的条目丢弃
-            ⑦ 详情页     target.fetch_detail=True 且实现 parse_detail 时抓取正文；被拦截记 blocked
+            ⑦ 详情页     target.fetch_detail=True 且实现 parse_detail 时抓取正文；被拦截记 blocked，超过 DETAIL_REFRESH_DAYS 天后重抓
             ⑧ 入库       storage.py           articles 表，dedup_key 唯一，冲突时更新
             ⑨ 翻页       mod.next_page_url / paginator，带环路保护
 ```

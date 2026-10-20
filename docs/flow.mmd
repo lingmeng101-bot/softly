@@ -1,13 +1,11 @@
 flowchart TD
     A["main.py<br/>setup_logger / init_db"] --> B{"proxy_alive？<br/>Clash 混合端口可连"}
-    B -- "是" --> C["正常模式"]
-    B -- "否" --> D{"PROXY_FALLBACK_DIRECT<br/>且 network_alive？"}
-    D -- "是" --> E["direct_only<br/>AUTO 回落直连，FORCE 跳过"]
-    D -- "否" --> F["非 DIRECT 站点跳过"]
-    C --> G{"遍历 config.TARGETS"}
-    E --> G
-    F --> G
-    G -- "下一个 target" --> H["确定 route<br/>direct_only 时 AUTO 改为 DIRECT"]
+    B -- "是" --> G{"遍历 config.TARGETS"}
+    B -- "否" --> G
+    G -- "下一个 target" --> R{"代理可用？"}
+    R -- "是" --> H["route = target.route"]
+    R -- "否" --> E["AUTO：逐站探测直连可达性<br/>可达 → 走直连，不可达 → 跳过<br/>FORCE：跳过（不回落直连）<br/>DIRECT：保持直连"]
+    E --> H
     H --> I{"url 有效<br/>且 page &lt; max_pages<br/>且未访问？"}
     I -- "否" --> G
     I -- "是" --> T0
@@ -51,7 +49,7 @@ flowchart TD
 
     IT --> V{"url 与 title 齐全？"}
     V -- "否" --> BAD["bad += 1"]
-    V -- "是" --> DD{"判重<br/>fetch_detail 时按 URL + 状态<br/>否则按 content_hash"}
+    V -- "是" --> DD{"判重<br/>fetch_detail 时按 URL + 状态 + 刷新周期<br/>否则按 content_hash"}
     DD -- "命中且正常" --> SKIP["skipped += 1"]
     DD -- "未命中 / 可重试" --> DET{"fetch_detail 且<br/>实现 parse_detail？"}
     DET -- "否" --> SAVE

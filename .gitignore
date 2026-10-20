@@ -17,3 +17,6 @@ data/
 # 编辑器
 .idea/
 .vscode/
+
+# 流程图中间渲染产物
+docs/_*

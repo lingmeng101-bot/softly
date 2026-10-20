@@ -25,6 +25,12 @@ main.py
 `access_status` 取值：`normal` / `blocked` / `api_error` / `parse_error` / `empty` / `text_unsupported`。
 非 `normal` 记录在下次运行时会重新抓取并覆盖。
 
+## 流程图
+
+![主流程](docs/flow.png)
+
+Mermaid 源文件：[docs/flow.mmd](docs/flow.mmd)。
+
 ## 依赖
 
 ```

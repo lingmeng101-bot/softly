@@ -1,0 +1,79 @@
+flowchart TD
+    A["main.py<br/>setup_logger / init_db"] --> B{"proxy_alive？<br/>Clash 混合端口可连"}
+    B -- "是" --> C["正常模式"]
+    B -- "否" --> D{"PROXY_FALLBACK_DIRECT<br/>且 network_alive？"}
+    D -- "是" --> E["direct_only<br/>AUTO 回落直连，FORCE 跳过"]
+    D -- "否" --> F["非 DIRECT 站点跳过"]
+    C --> G{"遍历 config.TARGETS"}
+    E --> G
+    F --> G
+    G -- "下一个 target" --> H["确定 route<br/>direct_only 时 AUTO 改为 DIRECT"]
+    H --> I{"url 有效<br/>且 page &lt; max_pages<br/>且未访问？"}
+    I -- "否" --> G
+    I -- "是" --> T0
+
+    subgraph FETCH["crawler/fetcher.py · 四层降级（缺失层自动跳过）"]
+        direction TB
+        T0["T0 httpx：fetch 入口<br/>随机 UA + tenacity 重试"] --> Q0{"pass？"}
+        Q0 -- "是" --> RET["Fetched(res, tier, attempts)"]
+        Q0 -- "否（403 / 挑战页 / 超时）" --> T1["T1 curl_cffi<br/>impersonate=chrome120<br/>trust_env=False"]
+        T1 --> Q1{"pass？"}
+        Q1 -- "是" --> RET
+        Q1 -- "否" --> T2["T2 httpcloak<br/>preset=chrome-latest<br/>http_version=auto"]
+        T2 --> Q2{"pass？"}
+        Q2 -- "是" --> RET
+        Q2 -- "否" --> T3["T3 playwright<br/>headless chromium<br/>DIRECT 禁用系统代理"]
+        T3 --> Q3{"pass？"}
+        Q3 -- "是" --> RET
+        Q3 -- "否" --> ERR["FetchFailed / ProxyDown"]
+        ERR -. "rotate_on_block=True 且 403（可选）<br/>rotate_node → 重试 T1" .-> T1
+    end
+
+    RET --> S["sniff：json / html / xml / text"]
+    S --> K{"内容类型"}
+    K -- "text" --> KD["bad += 1<br/>跳过该页"]
+    K -- "json" --> KJ{"res.json() 成功？"}
+    K -- "html / xml" --> P["按 html 处理"]
+    KJ -- "否" --> P
+    KJ -- "是" --> GD{"guard.check<br/>业务码 / 消息报错？"}
+    GD -- "是" --> AE["access_status = api_error<br/>payload 置空"]
+    GD -- "否" --> PL["get_parser(host)<br/>专属解析器 / generic"]
+    AE --> PL
+    P --> PL
+    PL --> PA["parse_list(payload, source)"]
+    PA --> PE{"解析异常？"}
+    PE -- "是" --> PERR["parse_error += 1<br/>禁止内容降级"]
+    PE -- "否" --> EM{"items 为空<br/>且 html 空壳<br/>且仍有更高层？"}
+    EM -- "是" --> DOWN["fetch(min_tier=下一层)<br/>重新解析一次"]
+    EM -- "否" --> IT["逐条 item"]
+    DOWN --> IT
+    PERR --> IT
+
+    IT --> V{"url 与 title 齐全？"}
+    V -- "否" --> BAD["bad += 1"]
+    V -- "是" --> DD{"判重<br/>fetch_detail 时按 URL + 状态<br/>否则按 content_hash"}
+    DD -- "命中且正常" --> SKIP["skipped += 1"]
+    DD -- "未命中 / 可重试" --> DET{"fetch_detail 且<br/>实现 parse_detail？"}
+    DET -- "否" --> SAVE
+    DET -- "是" --> DF["抓详情页 → parse_detail"]
+    DF --> DR{"详情结果"}
+    DR -- "blocked" --> SBLK["status = blocked"]
+    DR -- "空 / 异常" --> SERR["status = empty"]
+    DR -- "有正文" --> SOK["status = normal<br/>content = 正文"]
+    SBLK --> SAVE
+    SERR --> SAVE
+    SOK --> SAVE
+    SAVE["save_article（UPSERT）<br/>sqlite 异常 → bad += 1"] --> CNT["计数 added / blocked"]
+    BAD --> NEXT["下一条 item"]
+    SKIP --> NEXT
+    CNT --> NEXT
+    NEXT --> LOOP{"还有 item？"}
+    LOOP -- "是" --> IT
+    LOOP -- "否" --> CM["commit_db"]
+
+    CM --> NP{"next_page_url<br/>专属实现 → paginator"}
+    NP -- "存在且无环路" --> I
+    NP -- "无下一页 / 环路" --> DONE["本目标结束<br/>CrawlStats"]
+    KD --> DONE
+    ERR --> DONE
+    DONE --> G

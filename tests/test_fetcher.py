@@ -156,6 +156,21 @@ def test_rotate_node_failure_is_silent(monkeypatch):
     assert fetcher.rotate_node("PROXY") is False
 
 
+def test_fetch_rotate_uses_given_group(monkeypatch):
+    seen = []
+
+    def fail(url, headers, route):
+        raise fetcher._TierFail("HTTP 403")
+
+    for tier in fetcher.TIERS:
+        monkeypatch.setitem(fetcher._TIER_FUNCS, tier, fail)
+    monkeypatch.setattr(fetcher, "rotate_node", lambda group=None: seen.append(group) or False)
+
+    with pytest.raises(fetcher.FetchFailed):
+        fetcher.fetch("https://rotate.example.com/", rotate_on_block=True, rotate_group="测试策略组")
+    assert seen == ["测试策略组"]
+
+
 def test_fetch_all_tiers_fail(monkeypatch):
     def fail(url, headers, route):
         raise fetcher._TierFail("HTTP 403")

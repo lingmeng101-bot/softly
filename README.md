@@ -36,8 +36,12 @@ playwright 需额外执行 `playwright install chromium`。
 
 ## 代理
 
-是否经过代理由 `Target.route` 控制（AUTO / DIRECT / FORCE）；具体域名分流由 Clash 规则负责，
-代码中不维护分流规则。缺省代理地址见 `config.PROXY_HTTP`。
+是否经过代理由 `Target.route` 控制：`AUTO` 经 Clash 由规则分流；`DIRECT` 不设置代理；
+`FORCE` 经 Clash 且不回落直连。具体域名分流由 Clash 规则负责，代码中不维护分流规则。
+缺省代理地址见 `config.PROXY_HTTP`。
+
+可选：`Target.rotate_group` 指定全部层级失败且原因为 403 时用于切换节点的策略组
+（缺省 `config.CLASH_GROUP`）；该字段不绑定正常请求的路由。
 
 ## 本机配置（`.env`）
 

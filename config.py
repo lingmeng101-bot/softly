@@ -63,7 +63,7 @@ PLAYWRIGHT_ROTATE_ON_BLOCK = False
 class Route(StrEnum):
     AUTO   = "auto"       # 经 Clash 由规则分流（默认）
     DIRECT = "direct"     # 不设置代理，直连，绕过 Clash
-    FORCE  = "force"      # 经 Clash 且限定在 PROXY 策略组内（不回落 DIRECT）
+    FORCE  = "force"      # 经 Clash，禁止回落 DIRECT
 
 
 @dataclass
@@ -73,7 +73,7 @@ class Target:
     max_pages: int = DEFAULT_MAX_PAGES
     fetch_detail: bool = DEFAULT_FETCH_DETAIL
     route: Route = Route.AUTO
-    proxy_group: str | None = None  # 配合 FORCE 与节点切换
+    rotate_group: str | None = None  # 失败换节点时使用的策略组（缺省 CLASH_GROUP）；不绑定正常请求路由
 
     @property
     def active(self):

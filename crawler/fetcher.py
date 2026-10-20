@@ -523,7 +523,7 @@ def fetch(
     min_tier: str | None = None,
     route: Route | str = Route.AUTO,
     rotate_on_block: bool = False,
-    proxy_group: str | None = None,
+    rotate_group: str | None = None,
 ) -> Fetched:
     route = Route(route)
     start = _start_tier(url, min_tier)
@@ -553,7 +553,7 @@ def fetch(
 
     # 全部层级失败且原因为 403 时，切换节点后重试一次 curl_cffi
     if rotate_on_block and cffi_requests is not None and "HTTP 403" in last_reason:
-        if rotate_node(proxy_group):
+        if rotate_node(rotate_group):
             try:
                 res = _tier_curl_cffi(url, headers, route)
             except _TierFail as e:

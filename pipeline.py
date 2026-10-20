@@ -67,7 +67,7 @@ def crawl_and_save(target, conn, route=None) -> CrawlStats:
         visited.add(url)
 
         try:
-            f = fetch(url, route=fetch_route, proxy_group=target.proxy_group,
+            f = fetch(url, route=fetch_route, rotate_group=target.rotate_group,
                       rotate_on_block=config.PLAYWRIGHT_ROTATE_ON_BLOCK)
         except ProxyDown as e:
             log.error("代理不可用，本轮结束: %s (%s)", url, e)
@@ -127,7 +127,7 @@ def crawl_and_save(target, conn, route=None) -> CrawlStats:
             nxt = tiers[tiers.index(f.tier) + 1]
             log.warning("内容为空，改用 %s 重取: %s", nxt, url)
             try:
-                f = fetch(url, min_tier=nxt, route=fetch_route, proxy_group=target.proxy_group)
+                f = fetch(url, min_tier=nxt, route=fetch_route, rotate_group=target.rotate_group)
                 res = f.res
                 items = mod.parse_list(res.text, source=str(res.url))
             except Exception as e:

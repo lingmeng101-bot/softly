@@ -59,6 +59,12 @@ PLAYWRIGHT_HEADLESS = True
 PLAYWRIGHT_WAIT = "domcontentloaded"       # 需要等 JS 的站可改 "networkidle"
 PLAYWRIGHT_TIMEOUT_MS = 20000
 PLAYWRIGHT_CHALLENGE_WAIT = 15   # 浏览器遇到 Cloudflare 挑战页时最多等待的秒数
+
+# 需要人工完成验证的站点：复用浏览器会话，不做任何 JS 绕过
+# HTTP_COOKIE 供 T0 使用；PLAYWRIGHT_STORAGE_STATE 供 T3 使用（浏览器导出的 cookies JSON）
+HTTP_COOKIE = os.environ.get("HTTP_COOKIE", "")
+HTTP_USER_AGENT = os.environ.get("HTTP_USER_AGENT", "")
+PLAYWRIGHT_STORAGE_STATE = os.environ.get("PLAYWRIGHT_STORAGE_STATE", "")
 PLAYWRIGHT_ROTATE_ON_BLOCK = False
 
 

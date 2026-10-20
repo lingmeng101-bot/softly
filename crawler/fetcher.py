@@ -1,5 +1,6 @@
 import json
 import logging
+import os
 import random
 import re
 import time
@@ -142,7 +143,10 @@ def autodetect(content:bytes)->str :
 # 构造请求头（默认头 + 随机 UA）
 def build_header(headers:dict|None =None) -> dict[str, str]:
     h=dict(DEFAULT_HEADERS)
-    h['User-Agent'] = random.choice(USER_AGENTS)
+    # 人工完成验证后可指定与浏览器一致的 UA 和 Cookie
+    h['User-Agent'] = config.HTTP_USER_AGENT or random.choice(USER_AGENTS)
+    if config.HTTP_COOKIE:
+        h["Cookie"] = config.HTTP_COOKIE
     if headers:
         h.update(headers)
     return h
@@ -419,8 +423,16 @@ def _ensure_browser(route: Route):
 
 def _tier_playwright(url: str, headers, route: Route):
     browser = _ensure_browser(route)
+    ctx = None
     try:
-        page = browser.new_page()
+        state = config.PLAYWRIGHT_STORAGE_STATE
+        if state and not os.path.isabs(state):
+            state = str(config.BASE_DIR / state)
+        if state and os.path.exists(state):
+            ctx = browser.new_context(storage_state=state)
+            page = ctx.new_page()
+        else:
+            page = browser.new_page()
         try:
             resp = page.goto(url, wait_until=config.PLAYWRIGHT_WAIT,
                              timeout=config.PLAYWRIGHT_TIMEOUT_MS)
@@ -447,6 +459,8 @@ def _tier_playwright(url: str, headers, route: Route):
             )
         finally:
             page.close()
+            if ctx is not None:
+                ctx.close()
     except _TierFail:
         raise
     except Exception as e:

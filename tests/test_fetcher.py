@@ -423,3 +423,45 @@ def test_playwright_no_wait_on_normal_page(monkeypatch):
     res = fetcher._tier_playwright("https://cf.example.com/", None, config.Route.AUTO)
     assert res.status_code == 200
     assert page.waits == 0
+
+
+def test_build_header_uses_manual_session(monkeypatch):
+    monkeypatch.setattr(config, "HTTP_USER_AGENT", "MyTestUA/1.0")
+    monkeypatch.setattr(config, "HTTP_COOKIE", "cf_clearance=abc; other=1")
+    headers = fetcher.build_header()
+    assert headers["User-Agent"] == "MyTestUA/1.0"
+    assert headers["Cookie"] == "cf_clearance=abc; other=1"
+    assert fetcher.build_header({"Referer": "https://x/"})["Referer"] == "https://x/"
+
+
+def test_playwright_uses_storage_state(monkeypatch, tmp_path):
+    state = tmp_path / "session.json"
+    state.write_text("{}", encoding="utf-8")
+    page = _FakePage([_normal_html()], status=200)
+    closed = {"ctx": False}
+
+    class _Ctx:
+        def new_page(self):
+            return page
+
+        def close(self):
+            closed["ctx"] = True
+
+    class _Browser:
+        def __init__(self):
+            self.kwargs = None
+
+        def new_context(self, **kwargs):
+            self.kwargs = kwargs
+            return _Ctx()
+
+        def new_page(self):
+            raise AssertionError("配置了 storage_state 时应走 new_context")
+
+    browser = _Browser()
+    monkeypatch.setattr(fetcher, "_ensure_browser", lambda route: browser)
+    monkeypatch.setattr(config, "PLAYWRIGHT_STORAGE_STATE", str(state))
+    res = fetcher._tier_playwright("https://cf.example.com/", None, config.Route.AUTO)
+    assert res.status_code == 200
+    assert browser.kwargs == {"storage_state": str(state)}
+    assert closed["ctx"] is True

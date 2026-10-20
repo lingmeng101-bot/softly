@@ -49,6 +49,14 @@ playwright 需额外执行 `playwright install chromium`。
 可选：`Target.rotate_group` 指定全部层级失败且原因为 403 时用于切换节点的策略组
 （缺省 `config.CLASH_GROUP`）；该字段不绑定正常请求的路由。
 
+## 需要人工验证的站点
+
+部分站点（如 Cloudflare 保护的面板）会先返回人机验证页。本项目**不做 JS 绕过**：
+先在浏览器中手动完成验证，再导出会话给爬虫复用，相关配置写在 `.env`：
+
+- `HTTP_COOKIE` / `HTTP_USER_AGENT`：供 T0 使用，需与过验证时的浏览器一致
+- `PLAYWRIGHT_STORAGE_STATE`：浏览器导出的 cookies JSON（如 Cookie-Editor 导出），T3 会用它创建浏览器上下文
+
 ## 本机配置（`.env`）
 
 代理端口、外部控制地址、密钥、策略组名均从项目根目录的 `.env` 读取（已被 `.gitignore` 忽略）：

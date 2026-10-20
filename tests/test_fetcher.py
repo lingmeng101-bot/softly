@@ -176,7 +176,8 @@ def test_fetch_rotate_uses_given_group(monkeypatch):
     monkeypatch.setattr(fetcher, "rotate_node", lambda group=None: seen.append(group) or False)
 
     with pytest.raises(fetcher.FetchFailed):
-        fetcher.fetch("https://rotate.example.com/", rotate_on_block=True, rotate_group="测试策略组")
+        fetcher.fetch("https://rotate.example.com/", route=config.Route.FORCE,
+                      rotate_on_block=True, rotate_group="测试策略组")
     assert seen == ["测试策略组"]
 
 
@@ -323,6 +324,45 @@ def test_browser_failure_isolated_per_route(monkeypatch):
     assert "proxy" in fetcher._pw_broken
     # 代理浏览器失败不应影响直连浏览器
     assert fetcher._ensure_browser(config.Route.DIRECT) is not None
+
+
+def test_connect_timeout_counts_as_connect(monkeypatch):
+    def boom(url, headers, route):
+        raise fetcher.httpx.ConnectTimeout("connect timeout")
+
+    monkeypatch.setattr(fetcher, "_http_get", boom)
+    with pytest.raises(fetcher._TierFail) as exc:
+        fetcher._tier_httpx("https://x.example/", None, fetcher.LEG_DIRECT)
+    # 连不上代理：应计入 connect，才能触发 ProxyDown / 熔断
+    assert exc.value.reason.startswith("connect:")
+
+
+def test_read_timeout_not_counted_as_connect(monkeypatch):
+    def boom(url, headers, route):
+        raise fetcher.httpx.ReadTimeout("read timeout")
+
+    monkeypatch.setattr(fetcher, "_http_get", boom)
+    with pytest.raises(fetcher._TierFail) as exc:
+        fetcher._tier_httpx("https://x.example/", None, fetcher.LEG_DIRECT)
+    # 连接已建立只是站慢：不能算出口不通，否则会误触发全局熔断
+    assert exc.value.reason.startswith("timeout:")
+
+
+def test_direct_leg_does_not_rotate_node(monkeypatch):
+    rotated = []
+
+    def fail(url, headers, leg):
+        raise fetcher._TierFail("HTTP 403")
+
+    for tier in fetcher.TIERS:
+        monkeypatch.setitem(fetcher._TIER_FUNCS, tier, fail)
+    monkeypatch.setattr(fetcher, "rotate_node", lambda group=None: rotated.append(group) or True)
+
+    with pytest.raises(fetcher.FetchFailed):
+        fetcher.fetch("https://direct403.example.com/",
+                      route=config.Route.DIRECT, rotate_on_block=True)
+    # 直连失败与 Clash 节点无关，不该动用户的节点
+    assert rotated == []
 
 
 def test_close_all_resets_broken_state(monkeypatch):

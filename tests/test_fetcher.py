@@ -194,22 +194,26 @@ def test_network_alive(monkeypatch):
     seen = {}
 
     class _R:
+        status_code = 204
+
         def raise_for_status(self):
             pass
 
     def fake_get(url, **kwargs):
+        seen["url"] = url
         seen.update(kwargs)
         return _R()
 
     monkeypatch.setattr(fetcher.httpx, "get", fake_get)
-    assert fetcher.network_alive() is True
-    assert seen.get("trust_env") is False      # 不读环境代理，才是真直连探测
+    assert fetcher.network_alive("https://target.example.com/list") is True
+    assert seen["url"] == "https://target.example.com/list"   # 探测目标站，而非公网探针
+    assert seen.get("trust_env") is False                     # 不读环境代理，才是真直连探测
 
     def boom(*args, **kwargs):
         raise RuntimeError("no net")
 
     monkeypatch.setattr(fetcher.httpx, "get", boom)
-    assert fetcher.network_alive() is False
+    assert fetcher.network_alive("https://target.example.com/list") is False
 
 
 def test_proxy_alive_ignores_env_proxy(monkeypatch):
@@ -343,3 +347,11 @@ def test_cffi_session_ignores_env_proxy(monkeypatch):
     assert captured[0]["proxies"] == {"http": "", "https": ""}   # 显式置空，覆盖 libcurl 的环境代理
     assert captured[1]["trust_env"] is False
     assert captured[1]["proxies"] == {"http": config.PROXY_HTTP, "https": config.PROXY_HTTP}
+
+
+def test_looks_like_shell_link_variants():
+    # <a 后接换行或直接 > 的写法也要能识别为链接
+    newline_links = "<html><body>" + "<a\nhref='/x'>t</a>" * 6 + "y" * 4000 + "</body></html>"
+    bare_links = "<html><body>" + "<a>t</a>" * 6 + "y" * 4000 + "</body></html>"
+    assert looks_like_shell(FakeRes(text=newline_links)) is False
+    assert looks_like_shell(FakeRes(text=bare_links)) is False

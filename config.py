@@ -29,6 +29,7 @@ _load_env(BASE_DIR / ".env")
 MAX_PAGES_HARD = 50
 DEFAULT_MAX_PAGES = 1
 DEFAULT_FETCH_DETAIL = False
+DETAIL_REFRESH_DAYS = 7   # fetch_detail 模式下超过该天数重抓详情；0 表示不按时间重抓
 
 # ---- 代理（Clash） ----
 # 本机相关配置从 .env 读取，以下为缺省值

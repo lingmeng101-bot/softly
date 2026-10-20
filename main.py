@@ -20,26 +20,22 @@ def main() -> None:
     conn = init_db()
     total = CrawlStats()
     alive = proxy_alive()
-    direct_only = False
-    if not alive and config.PROXY_FALLBACK_DIRECT:
-        if network_alive():
-            direct_only = True
-            log.warning("[proxy] %s 不可用，但直连可出网（TUN/全局模式）→ 非 DIRECT 站点改走直连",
-                        config.PROXY_HTTP)
     try:
         for name, target in config.TARGETS.items():
             if not target.active:
                 log.info("跳过（未启用）: %s", name)
                 continue
-            if not alive and target.route != config.Route.DIRECT:
-                if not direct_only:
-                    log.error("代理不可用，跳过国外站: %s", name)
-                    continue
-                if target.route == config.Route.FORCE:
+            route = target.route
+            if not alive and route != config.Route.DIRECT:
+                if route == config.Route.FORCE:
                     log.error("代理不可用，FORCE 站点不回落直连，跳过: %s", name)
                     continue
-            # 仅 AUTO 回落直连；FORCE 已跳过，DIRECT 保持原路由
-            route = config.Route.DIRECT if (direct_only and target.route == config.Route.AUTO) else target.route
+                if not config.PROXY_FALLBACK_DIRECT or not network_alive(target.url):
+                    log.error("代理不可用且直连不可达，跳过: %s", name)
+                    continue
+                #逐个目标站探测后回落直连，避免用公网探针误判
+                route = config.Route.DIRECT
+                log.warning("代理不可用，直连可达，改走直连: %s", name)
             log.info("=== %s  %s route=%s fetch_detail=%s",
                      name, target.url, route, target.fetch_detail)
             total += crawl_and_save(target, conn, route=route)

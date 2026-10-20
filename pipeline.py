@@ -1,6 +1,7 @@
 import logging
 import sqlite3
 from dataclasses import asdict, dataclass, is_dataclass
+from datetime import datetime, timedelta
 
 import config
 import paginator
@@ -41,12 +42,28 @@ def as_dict(item) -> dict:
 
 
 def as_text(value) -> str:
-    # 解析器可能返回嵌套字段（如 {"rendered": ...}），入库与哈希前统一转文本
+    # 解析器可能返回嵌套字段（如 {"rendered": ...} 或列表），入库与哈希前统一转文本
     if isinstance(value, dict):
         value = value.get("rendered") or value.get("text") or value.get("value")
+    if isinstance(value, (list, tuple)):
+        return " ".join(as_text(item) for item in value).strip()
     if value is None:
         return ""
     return value if isinstance(value, str) else str(value)
+
+
+def _detail_stale(fetched_at: str | None) -> bool:
+    # 详情页超过配置天数未更新时重新抓取，避免正文更新永远发现不了
+    days = config.DETAIL_REFRESH_DAYS
+    if not days:
+        return False
+    if not fetched_at:
+        return True
+    try:
+        stamp = datetime.fromisoformat(fetched_at)
+    except ValueError:
+        return True
+    return datetime.now() - stamp >= timedelta(days=days)
 
 
 def crawl_and_save(target, conn, route=None) -> CrawlStats:
@@ -129,7 +146,21 @@ def crawl_and_save(target, conn, route=None) -> CrawlStats:
             try:
                 f = fetch(url, min_tier=nxt, route=fetch_route, rotate_group=target.rotate_group)
                 res = f.res
-                items = mod.parse_list(res.text, source=str(res.url))
+                #降级后重新判格式与接口错误，避免把 JSON 响应当 HTML 解析
+                kind = sniff(res)
+                payload = res.text
+                if kind == "json":
+                    try:
+                        payload = res.json()
+                    except Exception as e:
+                        log.warning("降级响应自称 json 但解析失败，按 html 处理: %s", e)
+                if isinstance(payload, (dict, list)):
+                    err = check(payload)
+                    if err:
+                        log.warning("内容降级后接口报错：%s", err)
+                        access_status, error_msg = "api_error", err
+                        payload = []
+                items = mod.parse_list(payload, source=str(res.url))
             except Exception as e:
                 log.warning("内容降级失败，保持空结果: %s (%s)", url, e)
 
@@ -147,14 +178,15 @@ def crawl_and_save(target, conn, route=None) -> CrawlStats:
             key = dedup_key(link)
             content = as_text(row.get("content"))
             chash = content_hash(title, content)
-            old_hash, old_status = saved_state(conn, key)
+            old_hash, old_status, old_fetched = saved_state(conn, key)
             if key in seen:
                 stats.skipped += 1
                 continue
             # fetch_detail 模式下 content_hash 来自详情页正文，与列表页计算结果不一致；
             # 因此改为按 URL 是否存在且状态正常判重，避免重复抓取详情页
             if target.fetch_detail:
-                skip = old_hash is not None and old_status not in RETRYABLE
+                skip = (old_hash is not None and old_status not in RETRYABLE
+                        and not _detail_stale(old_fetched))
             else:
                 skip = old_hash == chash and old_status not in RETRYABLE
             if skip:

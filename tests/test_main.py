@@ -12,7 +12,7 @@ def _setup(monkeypatch, alive, direct_ok):
     monkeypatch.setattr(main_mod, "setup_logger", lambda: None)
     monkeypatch.setattr(main_mod, "log_tiers", lambda: None)
     monkeypatch.setattr(main_mod, "proxy_alive", lambda: alive)
-    monkeypatch.setattr(main_mod, "network_alive", lambda: direct_ok)
+    monkeypatch.setattr(main_mod, "network_alive", lambda url: direct_ok)
     monkeypatch.setattr(main_mod, "init_db", lambda: _FakeConn())
     monkeypatch.setattr(main_mod, "close_all", lambda: None)
 

@@ -376,3 +376,77 @@ def test_dict_content_is_flattened(tmp_path, monkeypatch):
     assert stats.added == 1
     assert conn.execute("select content from articles").fetchone()[0] == "正文内容"
     conn.close()
+
+
+def test_fetch_detail_retries_after_refresh_days(tmp_path, monkeypatch):
+    detail_calls = []
+    mod = make_mod(lambda payload, source: [ITEM])
+    mod.parse_detail = lambda html: "正文内容"
+    monkeypatch.setattr(pipeline, "fetch", _detail_fetch(detail_calls))
+    monkeypatch.setattr(pipeline, "looks_like_shell", lambda res: False)
+    monkeypatch.setattr(pipeline, "get_parser", lambda url: mod)
+    conn = db(tmp_path, monkeypatch)
+
+    pipeline.crawl_and_save(target(fetch_detail=True), conn)
+    assert len(detail_calls) == 1
+    # 模拟详情页数据已是很多天前抓的
+    conn.execute("update articles set fetched_at='2000-01-01T00:00:00'")
+    conn.commit()
+
+    second = pipeline.crawl_and_save(target(fetch_detail=True), conn)
+    assert second.added == 1
+    assert len(detail_calls) == 2      # 超过刷新周期，重新抓详情
+    conn.close()
+
+
+def test_fetch_detail_refresh_can_be_disabled(tmp_path, monkeypatch):
+    monkeypatch.setattr(config, "DETAIL_REFRESH_DAYS", 0)
+    detail_calls = []
+    mod = make_mod(lambda payload, source: [ITEM])
+    mod.parse_detail = lambda html: "正文内容"
+    monkeypatch.setattr(pipeline, "fetch", _detail_fetch(detail_calls))
+    monkeypatch.setattr(pipeline, "looks_like_shell", lambda res: False)
+    monkeypatch.setattr(pipeline, "get_parser", lambda url: mod)
+    conn = db(tmp_path, monkeypatch)
+
+    pipeline.crawl_and_save(target(fetch_detail=True), conn)
+    conn.execute("update articles set fetched_at='2000-01-01T00:00:00'")
+    conn.commit()
+    second = pipeline.crawl_and_save(target(fetch_detail=True), conn)
+    assert second.skipped == 1 and len(detail_calls) == 1   # 关闭后只按存在性判重
+    conn.close()
+
+
+def test_content_downgrade_resniffs_json(tmp_path, monkeypatch):
+    calls = []
+    shell = FakeRes(text="<html><body><div id=app></div></body></html>")
+    payload = {"items": [{"title": "A" * 30, "link": "https://a.com/1"}]}
+    second = FakeRes(text='{"items": []}', ct="application/json", payload=payload)
+
+    def fake_fetch(url, **kw):
+        calls.append(kw.get("min_tier"))
+        return fetched(second if kw.get("min_tier") else shell, tier=kw.get("min_tier") or "httpx")
+
+    def parse_list(payload, source):
+        # 只有收到 dict（重新 sniff 后）才认为解析成功
+        return [ITEM] if isinstance(payload, dict) else []
+
+    monkeypatch.setattr(pipeline, "fetch", fake_fetch)
+    monkeypatch.setattr(pipeline, "get_parser", lambda url: make_mod(parse_list))
+    conn = db(tmp_path, monkeypatch)
+    stats = pipeline.crawl_and_save(target(), conn)
+    assert stats.added == 1
+    assert len(calls) == 2 and calls[1] == TIERS[1]
+    conn.close()
+
+
+def test_list_content_is_flattened(tmp_path, monkeypatch):
+    item = dict(ITEM, content=["第一段", "第二段"])
+    monkeypatch.setattr(pipeline, "looks_like_shell", lambda res: False)
+    monkeypatch.setattr(pipeline, "fetch", lambda url, **kw: fetched(FakeRes(text="<html>ok</html>")))
+    monkeypatch.setattr(pipeline, "get_parser", lambda url: make_mod(lambda payload, source: [item]))
+    conn = db(tmp_path, monkeypatch)
+    stats = pipeline.crawl_and_save(target(), conn)
+    assert stats.added == 1
+    assert conn.execute("select content from articles").fetchone()[0] == "第一段 第二段"
+    conn.close()

@@ -51,13 +51,13 @@ def init_db():
     return conn
 
 
-# 读取已存的 content_hash 与 access_status；无记录时返回 (None, None)
-def saved_state(conn: sqlite3.Connection, dedup_key: str) -> tuple[str | None, str | None]:
+# 读取已存的 content_hash、access_status 与 fetched_at；无记录时返回 (None, None, None)
+def saved_state(conn: sqlite3.Connection, dedup_key: str) -> tuple[str | None, str | None, str | None]:
     row = conn.execute(
-        "SELECT content_hash, access_status FROM articles WHERE dedup_key = ? LIMIT 1",
+        "SELECT content_hash, access_status, fetched_at FROM articles WHERE dedup_key = ? LIMIT 1",
         (dedup_key,),
     ).fetchone()
-    return (row[0], row[1]) if row else (None, None)
+    return (row[0], row[1], row[2]) if row else (None, None, None)
 
 
 # 写入：dedup_key 唯一，冲突时更新

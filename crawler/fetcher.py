@@ -1,6 +1,7 @@
 import json
 import logging
 import random
+import re
 import time
 from typing import NamedTuple
 
@@ -37,6 +38,7 @@ except ImportError:
 
 
 # curl_cffi / httpcloak 自带与指纹匹配的请求头，此处仅透传业务字段
+_LINK_RE = re.compile(r"<a[\s>]", re.I)
 _BUSINESS_HEADERS = {"referer", "x-requested-with", "ali-ref"}
 
 
@@ -164,16 +166,17 @@ def proxy_alive() -> bool:
     return True
 
 
-def network_alive() -> bool:
-    # 直连出口探测：用于 TUN / 全局模式下代理端口不可用的场景
+def network_alive(url: str) -> bool:
+    # 直连可达性探测：直接探测目标站，避免用公网探针误判国内外站点的可达性
     t0 = time.perf_counter()
     try:
-        httpx.get(config.PROXY_PROBE_URL, timeout=config.PROXY_PROBE_TIMEOUT,
-                  trust_env=False).raise_for_status()
+        res = httpx.get(url, timeout=config.PROXY_PROBE_TIMEOUT,
+                        follow_redirects=True, trust_env=False)
     except Exception as e:
-        log.error("[net] 直连探活失败 (%s)", _short(e))
+        log.error("[net] 直连不可达 %s (%s)", url, _short(e))
         return False
-    log.info("[net] 直连可用  latency=%dms", (time.perf_counter() - t0) * 1000)
+    log.info("[net] 直连可达  status=%s  latency=%dms",
+             res.status_code, (time.perf_counter() - t0) * 1000)
     return True
 
 
@@ -252,7 +255,7 @@ def looks_like_shell(res) -> bool:
         text = res.text or ""
     except Exception:
         return False
-    return text.count("<a ") < 5 or len(text) < 3000
+    return len(_LINK_RE.findall(text)) < 5 or len(text) < 3000
 
 
 def _classify(res, tier: str) -> None:

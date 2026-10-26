@@ -6,6 +6,7 @@ import os
 import random
 import re
 import time
+import weakref
 from typing import NamedTuple
 
 import httpx
@@ -154,6 +155,36 @@ def build_header(headers:dict|None =None) -> dict[str, str]:
     return h
 
 
+# ---------------- 运行时状态（按事件循环隔离） ----------------
+# 客户端 / 会话 / 浏览器 / 代理熔断都属于"一轮运行"的状态，
+# 绑定到当前 asyncio 事件循环：不同 loop（例如测试里多次 asyncio.run）互不污染。
+
+
+class _Runtime:
+    def __init__(self):
+        self.clients: dict[str, httpx.AsyncClient] = {}
+        self.cffi_sessions: dict[str, object] = {}
+        self.cloak_sessions: dict[str, object] = {}
+        self.pw = None
+        self.pw_browsers: dict[str, object] = {}
+        self.pw_broken: dict[str, str] = {}
+        self.browser_locks: dict[str, asyncio.Lock] = {}
+        self.httpcloak_lock = asyncio.Lock()
+        self.proxy_down = False
+
+
+_runtimes: "weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, _Runtime]" = weakref.WeakKeyDictionary()
+
+
+def _runtime() -> _Runtime:
+    loop = asyncio.get_running_loop()
+    rt = _runtimes.get(loop)
+    if rt is None:
+        rt = _Runtime()
+        _runtimes[loop] = rt
+    return rt
+
+
 # ---------------- 路由：尝试序列 ----------------
 # 每个 Route 展开成一串 leg，按顺序尝试；连不上才轮到下一个 leg。
 LEG_PROXY = "proxy"
@@ -165,10 +196,6 @@ _LEGS: dict[Route, tuple[str, ...]] = {
     Route.FORCE:  (LEG_PROXY,),
 }
 
-# 本轮内已确认代理连不上：后续站点不再重复等待连接超时
-_PROXY_DOWN = False
-
-
 def _leg_of(route) -> str:
     # 接受 Route 或 leg 字符串，统一成 leg
     if route == LEG_DIRECT or route == LEG_PROXY:
@@ -177,7 +204,7 @@ def _leg_of(route) -> str:
 
 
 def _legs_for(route: Route) -> tuple[str, ...]:
-    if not _PROXY_DOWN:
+    if not _runtime().proxy_down:
         return _LEGS[route]
     if route == Route.FORCE:
         return ()
@@ -185,12 +212,10 @@ def _legs_for(route: Route) -> tuple[str, ...]:
 
 
 # 按 leg 懒创建客户端；direct 不设置代理
-_clients: dict[str, httpx.AsyncClient] = {}
-
-
 def _client_for(route) -> httpx.AsyncClient:
     key = _leg_of(route)
-    client = _clients.get(key)
+    rt = _runtime()
+    client = rt.clients.get(key)
     if client is None:
         kw = dict(
             default_encoding=autodetect,
@@ -201,7 +226,7 @@ def _client_for(route) -> httpx.AsyncClient:
         if key == LEG_PROXY:
             kw["proxy"] = config.PROXY_HTTP
         client = httpx.AsyncClient(**kw)
-        _clients[key] = client
+        rt.clients[key] = client
     return client
 
 
@@ -309,12 +334,10 @@ async def _tier_httpx(url: str, headers, route):
 
 # ---------------- T1：curl_cffi ----------------
 
-_cffi_sessions: dict[str, object] = {}
-
-
 def _cffi_session(route):
     key = _leg_of(route)
-    session = _cffi_sessions.get(key)
+    rt = _runtime()
+    session = rt.cffi_sessions.get(key)
     if session is None:
         kw = dict(timeout=30, allow_redirects=True, trust_env=False)
         if key == LEG_PROXY:
@@ -323,7 +346,7 @@ def _cffi_session(route):
             # libcurl 默认读取 HTTP(S)_PROXY 环境变量；显式置空才保证真正直连
             kw["proxies"] = {"http": "", "https": ""}
         session = cffi_requests.AsyncSession(**kw)
-        _cffi_sessions[key] = session
+        rt.cffi_sessions[key] = session
     return session
 
 
@@ -347,9 +370,6 @@ async def _tier_curl_cffi(url: str, headers, route):
 
 # ---------------- T2：httpcloak ----------------
 
-_cloak_sessions: dict[str, object] = {}
-
-
 def _httpcloak_ready() -> bool:
     try:
         httpcloak.available_presets()
@@ -361,7 +381,8 @@ def _httpcloak_ready() -> bool:
 
 def _cloak_session(route):
     key = _leg_of(route)
-    session = _cloak_sessions.get(key)
+    rt = _runtime()
+    session = rt.cloak_sessions.get(key)
     if session is None:
         session = httpcloak.Session(
             preset=config.HTTPCLOAK_PRESET,
@@ -370,16 +391,17 @@ def _cloak_session(route):
             http_version=config.HTTPCLOAK_HTTP_VERSION,   # HTTP/3 需要 UDP 中继，保持 auto 自动回落 h2
             without_conditional_cache=True,   # 禁用条件缓存，避免重复请求返回 304 空 body
         )
-        _cloak_sessions[key] = session
+        rt.cloak_sessions[key] = session
     return session
 
 
 async def _tier_httpcloak(url: str, headers, route):
     session = _cloak_session(route)
     try:
-        # httpcloak 没有异步接口，放到线程里避免阻塞事件循环
-        res = await asyncio.to_thread(
-            session.get, url, headers=_slice_business(headers) or None)
+        # httpcloak 没有异步接口；线程调用本身不是线程安全的，这里串行化
+        async with _runtime().httpcloak_lock:
+            res = await asyncio.to_thread(
+                session.get, url, headers=_slice_business(headers) or None)
     except Exception as e:
         if _looks_connect(e):
             raise _TierFail("connect: " + _short(e))
@@ -391,39 +413,43 @@ async def _tier_httpcloak(url: str, headers, route):
 
 # ---------------- T3：playwright ----------------
 
-_pw = None
-_pw_browsers: dict[str, object] = {}
-_pw_broken: dict[str, str] = {}
-
-
 async def _ensure_browser(route):
-    global _pw
     key = _leg_of(route)
-    broken = _pw_broken.get(key)
+    rt = _runtime()
+    broken = rt.pw_broken.get(key)
     if broken:
         raise _TierFail("playwright 不可用: " + broken)
-    browser = _pw_browsers.get(key)
+    browser = rt.pw_browsers.get(key)
     if browser is not None:
         return browser
-    try:
-        if _pw is None:
-            _pw = await async_playwright().start()
-        kwargs = dict(
-            headless=config.PLAYWRIGHT_HEADLESS,
-            args=["--disable-blink-features=AutomationControlled"],
-        )
-        # 代理在 launch 时绑定，直连与代理需分别启动浏览器实例
-        if key == LEG_PROXY:
-            kwargs["proxy"] = {"server": config.PROXY_HTTP}
-        else:
-            # 直连时禁用浏览器自身的系统代理
-            kwargs["args"].append("--no-proxy-server")
-        browser = await _pw.chromium.launch(**kwargs)
-        _pw_browsers[key] = browser
-    except Exception as e:
-        _pw_broken[key] = f"{type(e).__name__}: {_short(e)}"
-        log.warning("[降级] playwright 启动失败（%s），跳过该路由的该层: %s", key, _short(e))
-        raise _TierFail("playwright 不可用: " + _pw_broken[key])
+    # 并发下可能有多个任务同时首次进入：锁内二次检查，避免重复启动/泄漏浏览器
+    lock = rt.browser_locks.setdefault(key, asyncio.Lock())
+    async with lock:
+        broken = rt.pw_broken.get(key)
+        if broken:
+            raise _TierFail("playwright 不可用: " + broken)
+        browser = rt.pw_browsers.get(key)
+        if browser is not None:
+            return browser
+        try:
+            if rt.pw is None:
+                rt.pw = await async_playwright().start()
+            kwargs = dict(
+                headless=config.PLAYWRIGHT_HEADLESS,
+                args=["--disable-blink-features=AutomationControlled"],
+            )
+            # 代理在 launch 时绑定，直连与代理需分别启动浏览器实例
+            if key == LEG_PROXY:
+                kwargs["proxy"] = {"server": config.PROXY_HTTP}
+            else:
+                # 直连时禁用浏览器自身的系统代理
+                kwargs["args"].append("--no-proxy-server")
+            browser = await rt.pw.chromium.launch(**kwargs)
+            rt.pw_browsers[key] = browser
+        except Exception as e:
+            rt.pw_broken[key] = f"{type(e).__name__}: {_short(e)}"
+            log.warning("[降级] playwright 启动失败（%s），跳过该路由的该层: %s", key, _short(e))
+            raise _TierFail("playwright 不可用: " + rt.pw_broken[key])
     return browser
 
 
@@ -631,8 +657,8 @@ async def fetch(
     rotate_on_block: bool = False,
     rotate_group: str | None = None,
 ) -> Fetched:
-    global _PROXY_DOWN
     route = Route(route)
+    rt = _runtime()
     host = host_of(url)
     legs = _legs_for(route)
     if not legs:
@@ -644,7 +670,7 @@ async def fetch(
             return await _fetch_leg(url, headers, min_tier, leg, rotate_on_block,
                                     rotate_group, host, attempts)
         except ProxyDown as e:
-            _PROXY_DOWN = True
+            rt.proxy_down = True
             if leg == legs[-1]:
                 raise
             log.warning("[路由] %s 代理连不上，改走直连: %s", host, e)
@@ -653,38 +679,41 @@ async def fetch(
 
 
 async def close_all() -> None:
-    global _pw, _PROXY_DOWN
-    for client in _clients.values():
+    loop = asyncio.get_running_loop()
+    rt = _runtime()
+    for client in rt.clients.values():
         try:
             await client.aclose()
         except Exception:
             pass
-    _clients.clear()
-    for session in _cffi_sessions.values():
+    rt.clients.clear()
+    for session in rt.cffi_sessions.values():
         try:
             res = session.close()
             if inspect.isawaitable(res):
                 await res
         except Exception:
             pass
-    _cffi_sessions.clear()
-    for session in _cloak_sessions.values():
+    rt.cffi_sessions.clear()
+    for session in rt.cloak_sessions.values():
         try:
             # httpcloak 的 close 是同步的（只释放本地资源）
             session.close()
         except Exception:
             pass
-    _cloak_sessions.clear()
-    for browser in _pw_browsers.values():
+    rt.cloak_sessions.clear()
+    for browser in rt.pw_browsers.values():
         try:
             await browser.close()
         except Exception:
             pass
-    _pw_browsers.clear()
-    _pw_broken.clear()   # 允许下次重新尝试启动
-    _PROXY_DOWN = False  # 下一轮重新判定
-    if _pw is not None:
+    rt.pw_browsers.clear()
+    rt.pw_broken.clear()   # 允许下次重新尝试启动
+    rt.browser_locks.clear()
+    rt.proxy_down = False  # 下一轮重新判定
+    if rt.pw is not None:
         try:
-            await _pw.stop()
+            await rt.pw.stop()
         finally:
-            _pw = None
+            rt.pw = None
+    _runtimes.pop(loop, None)

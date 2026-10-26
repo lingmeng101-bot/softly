@@ -50,7 +50,6 @@ def _reset_manual_session(monkeypatch):
     monkeypatch.setattr(config, "HTTP_USER_AGENT", "")
     monkeypatch.setattr(config, "HTTP_COOKIE", "")
     monkeypatch.setattr(config, "PLAYWRIGHT_STORAGE_STATE", "")
-    monkeypatch.setattr(fetcher, "_PROXY_DOWN", False)
 
 
 class FakeRes:
@@ -327,22 +326,24 @@ def test_proxy_down_short_circuits_following_sites(monkeypatch):
     for tier in fetcher.TIERS:
         monkeypatch.setitem(fetcher._TIER_FUNCS, tier, async_call(fake))
 
-    with pytest.raises(fetcher.FetchFailed):
-        fetch("https://first.example.com/", route=config.Route.AUTO)
+    async def scenario():
+        with pytest.raises(fetcher.FetchFailed):
+            await fetcher.fetch("https://first.example.com/", route=config.Route.AUTO)
+        assert fetcher._runtime().proxy_down is True
+        seen.clear()
+        with pytest.raises(fetcher.FetchFailed):
+            await fetcher.fetch("https://second.example.com/", route=config.Route.AUTO)
 
-    seen.clear()
-    with pytest.raises(fetcher.FetchFailed):
-        fetch("https://second.example.com/", route=config.Route.AUTO)
+    run(scenario())
     # 第一站已确认代理不通，第二站不再等代理连接超时
     assert fetcher.LEG_PROXY not in seen
+def test_force_skipped_immediately_when_proxy_known_down():
+    async def scenario():
+        fetcher._runtime().proxy_down = True
+        return await fetcher.fetch("https://force.example.com/", route=config.Route.FORCE)
 
-
-def test_force_skipped_immediately_when_proxy_known_down(monkeypatch):
-    monkeypatch.setattr(fetcher, "_PROXY_DOWN", True)
     with pytest.raises(fetcher.ProxyDown):
-        fetch("https://force.example.com/", route=config.Route.FORCE)
-
-
+        run(scenario())
 def test_http_clients_ignore_env_proxy(monkeypatch):
     captured = []
 
@@ -354,16 +355,17 @@ def test_http_clients_ignore_env_proxy(monkeypatch):
             pass
 
     monkeypatch.setattr(fetcher.httpx, "AsyncClient", FakeClient)
-    monkeypatch.setattr(fetcher, "_clients", {})
-    fetcher._client_for(config.Route.DIRECT)
-    fetcher._client_for(config.Route.AUTO)
-    close_all()
+
+    async def scenario():
+        fetcher._client_for(config.Route.DIRECT)
+        fetcher._client_for(config.Route.AUTO)
+        await fetcher.close_all()
+
+    run(scenario())
     assert captured[0]["trust_env"] is False
     assert "proxy" not in captured[0]
     assert captured[1]["trust_env"] is False
     assert captured[1]["proxy"] == config.PROXY_HTTP
-
-
 def test_browser_failure_isolated_per_route(monkeypatch):
     import types
 
@@ -383,17 +385,15 @@ def test_browser_failure_isolated_per_route(monkeypatch):
             return FakePW()
 
     monkeypatch.setattr(fetcher, "async_playwright", lambda: Starter())
-    monkeypatch.setattr(fetcher, "_pw", None)
-    monkeypatch.setattr(fetcher, "_pw_browsers", {})
-    monkeypatch.setattr(fetcher, "_pw_broken", {})
 
-    with pytest.raises(fetcher._TierFail):
-        ensure_browser(config.Route.AUTO)
-    assert "proxy" in fetcher._pw_broken
-    # 代理浏览器失败不应影响直连浏览器
-    assert ensure_browser(config.Route.DIRECT) is not None
+    async def scenario():
+        with pytest.raises(fetcher._TierFail):
+            await fetcher._ensure_browser(config.Route.AUTO)
+        assert "proxy" in fetcher._runtime().pw_broken
+        # 代理浏览器失败不应影响直连浏览器
+        return await fetcher._ensure_browser(config.Route.DIRECT)
 
-
+    assert run(scenario()) is not None
 def test_connect_timeout_counts_as_connect(monkeypatch):
     def boom(url, headers, route):
         raise fetcher.httpx.ConnectTimeout("connect timeout")
@@ -433,20 +433,24 @@ def test_direct_leg_does_not_rotate_node(monkeypatch):
     assert rotated == []
 
 
-def test_close_all_resets_broken_state(monkeypatch):
-    monkeypatch.setattr(fetcher, "_pw_broken", {"proxy": "boom"})
-    monkeypatch.setattr(fetcher, "_pw_browsers", {})
-    monkeypatch.setattr(fetcher, "_pw", None)
-    close_all()
-    assert fetcher._pw_broken == {}
+def test_close_all_resets_broken_state():
+    async def scenario():
+        rt = fetcher._runtime()
+        rt.pw_broken = {"proxy": "boom"}
+        rt.pw_browsers = {}
+        rt.pw = None
+        await fetcher.close_all()
+        return rt.pw_broken
 
+    assert run(scenario()) == {}
+def test_close_all_resets_proxy_down():
+    async def scenario():
+        rt = fetcher._runtime()
+        rt.proxy_down = True
+        await fetcher.close_all()
+        return rt.proxy_down
 
-def test_close_all_resets_proxy_down(monkeypatch):
-    monkeypatch.setattr(fetcher, "_PROXY_DOWN", True)
-    close_all()
-    assert fetcher._PROXY_DOWN is False
-
-
+    assert run(scenario()) is False
 def test_browser_cached_per_route(monkeypatch):
     import types
 
@@ -472,22 +476,20 @@ def test_browser_cached_per_route(monkeypatch):
             return FakePW()
 
     monkeypatch.setattr(fetcher, "async_playwright", lambda: Starter())
-    monkeypatch.setattr(fetcher, "_pw", None)
-    monkeypatch.setattr(fetcher, "_pw_browsers", {})
-    monkeypatch.setattr(fetcher, "_pw_broken", {})
 
-    direct = ensure_browser(config.Route.DIRECT)
-    proxy = ensure_browser(config.Route.AUTO)
-    again = ensure_browser(config.Route.DIRECT)
+    async def scenario():
+        direct = await fetcher._ensure_browser(config.Route.DIRECT)
+        proxy = await fetcher._ensure_browser(config.Route.AUTO)
+        again = await fetcher._ensure_browser(config.Route.DIRECT)
+        return direct, proxy, again
 
+    direct, proxy, again = run(scenario())
     assert direct is again and direct is not proxy
     assert len(launches) == 2
     assert "proxy" not in launches[0]
     assert "--no-proxy-server" in launches[0]["args"]      # 直连禁用浏览器系统代理
     assert launches[1]["proxy"] == {"server": config.PROXY_HTTP}
     assert "--no-proxy-server" not in launches[1]["args"]
-
-
 def test_cffi_session_ignores_env_proxy(monkeypatch):
     import types
 
@@ -501,17 +503,18 @@ def test_cffi_session_ignores_env_proxy(monkeypatch):
             pass
 
     monkeypatch.setattr(fetcher, "cffi_requests", types.SimpleNamespace(AsyncSession=FakeSession))
-    monkeypatch.setattr(fetcher, "_cffi_sessions", {})
-    fetcher._cffi_session(config.Route.DIRECT)
-    fetcher._cffi_session(config.Route.AUTO)
-    close_all()
+
+    async def scenario():
+        fetcher._cffi_session(config.Route.DIRECT)
+        fetcher._cffi_session(config.Route.AUTO)
+        await fetcher.close_all()
+
+    run(scenario())
 
     assert captured[0]["trust_env"] is False               # 直连不读 HTTP(S)_PROXY
     assert captured[0]["proxies"] == {"http": "", "https": ""}   # 显式置空，覆盖 libcurl 的环境代理
     assert captured[1]["trust_env"] is False
     assert captured[1]["proxies"] == {"http": config.PROXY_HTTP, "https": config.PROXY_HTTP}
-
-
 def test_looks_like_shell_link_variants():
     # <a 后接换行或直接 > 的写法也要能识别为链接
     newline_links = "<html><body>" + "<a\nhref='/x'>t</a>" * 6 + "y" * 4000 + "</body></html>"
@@ -672,6 +675,102 @@ def test_httpcloak_disables_conditional_cache(monkeypatch):
             pass
 
     monkeypatch.setattr(fetcher, "httpcloak", type("FakeHTTPCloak", (), {"Session": FakeSession}))
-    monkeypatch.setattr(fetcher, "_cloak_sessions", {})
-    fetcher._cloak_session(config.Route.DIRECT)
+
+    async def scenario():
+        fetcher._cloak_session(config.Route.DIRECT)
+
+    run(scenario())
     assert captured and captured[0]["without_conditional_cache"] is True
+
+def test_runtime_state_isolated_between_event_loops(monkeypatch):
+    def fake(url, headers, route):
+        raise fetcher._TierFail("connect: refused")
+
+    for tier in fetcher.TIERS:
+        monkeypatch.setitem(fetcher._TIER_FUNCS, tier, async_call(fake))
+
+    async def first():
+        with pytest.raises(fetcher.FetchFailed):
+            await fetcher.fetch("https://a.example/", route=config.Route.AUTO)
+        return fetcher._runtime().proxy_down
+
+    assert run(first()) is True
+
+    async def second():
+        return fetcher._runtime().proxy_down
+
+    # 新的 asyncio.run 是新的 loop：熔断状态不能带过去
+    assert run(second()) is False
+
+
+def test_browser_launch_is_locked_under_concurrency(monkeypatch):
+    import types
+
+    launches = []
+
+    class FakeBrowser:
+        async def close(self):
+            pass
+
+    class FakeChromium:
+        async def launch(self, **kwargs):
+            launches.append(kwargs)
+            await asyncio.sleep(0.01)   # 放大竞态窗口
+            return FakeBrowser()
+
+    class FakePW:
+        chromium = FakeChromium()
+
+        def stop(self):
+            pass
+
+    class Starter:
+        async def start(self):
+            return FakePW()
+
+    monkeypatch.setattr(fetcher, "async_playwright", lambda: Starter())
+
+    async def scenario():
+        return await asyncio.gather(
+            fetcher._ensure_browser(config.Route.DIRECT),
+            fetcher._ensure_browser(config.Route.DIRECT),
+            fetcher._ensure_browser(config.Route.DIRECT),
+        )
+
+    browsers = run(scenario())
+    assert browsers[0] is browsers[1] is browsers[2]
+    assert len(launches) == 1
+
+
+def test_httpcloak_calls_are_serialized(monkeypatch):
+    import time
+    import types as _types
+
+    active = 0
+    peak = 0
+
+    class FakeSession:
+        def __init__(self, **kwargs):
+            pass
+
+        def get(self, url, headers=None):
+            nonlocal active, peak
+            active += 1
+            peak = max(peak, active)
+            time.sleep(0.02)
+            active -= 1
+            return FakeRes(text="<html><body>" + "<a href='/x'>t</a>" * 6 + "y" * 4000 + "</body></html>")
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(fetcher, "httpcloak", _types.SimpleNamespace(Session=FakeSession))
+
+    async def scenario():
+        await asyncio.gather(*(
+            fetcher._tier_httpcloak("https://x.example/", None, config.Route.DIRECT)
+            for _ in range(3)
+        ))
+
+    run(scenario())
+    assert peak == 1   # httpcloak 的线程调用必须串行

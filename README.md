@@ -1,6 +1,6 @@
 # softly
 
-多站点爬虫
+多站点爬虫（全链路异步：`main.py` 用 `asyncio.run` 驱动，fetcher 与 pipeline 均为 async；SQLite 存储保持同步）
 
 ## 结构
 

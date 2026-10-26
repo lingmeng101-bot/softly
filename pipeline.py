@@ -66,7 +66,7 @@ def _detail_stale(fetched_at: str | None) -> bool:
     return datetime.now() - stamp >= timedelta(days=days)
 
 
-def crawl_and_save(target, conn, route=None) -> CrawlStats:
+async def crawl_and_save(target, conn, route=None) -> CrawlStats:
     stats = CrawlStats()
     url = target.url
     page = 0
@@ -84,8 +84,8 @@ def crawl_and_save(target, conn, route=None) -> CrawlStats:
         visited.add(url)
 
         try:
-            f = fetch(url, route=fetch_route, rotate_group=target.rotate_group,
-                      rotate_on_block=config.PLAYWRIGHT_ROTATE_ON_BLOCK)
+            f = await fetch(url, route=fetch_route, rotate_group=target.rotate_group,
+                            rotate_on_block=config.PLAYWRIGHT_ROTATE_ON_BLOCK)
         except ProxyDown as e:
             log.error("代理不可用，本轮结束: %s (%s)", url, e)
             break
@@ -144,7 +144,7 @@ def crawl_and_save(target, conn, route=None) -> CrawlStats:
             nxt = tiers[tiers.index(f.tier) + 1]
             log.warning("内容为空，改用 %s 重取: %s", nxt, url)
             try:
-                f = fetch(url, min_tier=nxt, route=fetch_route, rotate_group=target.rotate_group)
+                f = await fetch(url, min_tier=nxt, route=fetch_route, rotate_group=target.rotate_group)
                 res = f.res
                 #降级后重新判格式与接口错误，避免把 JSON 响应当 HTML 解析
                 kind = sniff(res)
@@ -200,7 +200,7 @@ def crawl_and_save(target, conn, route=None) -> CrawlStats:
                 detail_fn = getattr(mod, "parse_detail", None)
                 if detail_fn:
                     try:
-                        d = fetch(link, route=fetch_route)
+                        d = await fetch(link, route=fetch_route)
                         detail_text = detail_fn(d.res.text)
                         if detail_text == "blocked":
                             item_status = "blocked"

@@ -1,3 +1,5 @@
+import asyncio
+
 import pytest
 
 import config
@@ -6,6 +8,40 @@ from crawler.fetcher import (
     BrowserResponse, TIERS, TIER_INDEX, _TIER_HINT, _challenge_hit, _is_challenge,
     _remember_tier, _slice_business, _start_tier, looks_like_shell,
 )
+
+
+def run(coro):
+    return asyncio.run(coro)
+
+
+def async_call(fn):
+    async def wrapper(*args, **kwargs):
+        return fn(*args, **kwargs)
+    return wrapper
+
+
+def fetch(*args, **kwargs):
+    return run(fetcher.fetch(*args, **kwargs))
+
+
+def rotate_node(*args, **kwargs):
+    return run(fetcher.rotate_node(*args, **kwargs))
+
+
+def close_all():
+    return run(fetcher.close_all())
+
+
+def ensure_browser(route):
+    return run(fetcher._ensure_browser(route))
+
+
+def tier_playwright(*args, **kwargs):
+    return run(fetcher._tier_playwright(*args, **kwargs))
+
+
+def tier_httpx(*args, **kwargs):
+    return run(fetcher._tier_httpx(*args, **kwargs))
 
 
 @pytest.fixture(autouse=True)
@@ -120,49 +156,77 @@ class _Resp:
 def test_rotate_node_skips_current_group_and_direct(monkeypatch):
     calls = []
 
-    def fake_get(url, **kwargs):
-        calls.append(("get", url))
-        return _Resp({"proxies": {
-            "PROXY": {"type": "Selector", "all": ["A", "DIRECT", "Sub", "B"], "now": "A"},
-            "A": {"type": "Vless"},
-            "B": {"type": "Vless"},
-            "DIRECT": {"type": "Direct"},
-            "Sub": {"type": "Selector"},
-        }})
+    class FakeClient:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
 
-    def fake_put(url, headers=None, json=None, timeout=None, **kwargs):
-        calls.append(("put", json))
-        return _Resp()
+        async def __aenter__(self):
+            return self
 
-    monkeypatch.setattr(fetcher.httpx, "get", fake_get)
-    monkeypatch.setattr(fetcher.httpx, "put", fake_put)
-    assert fetcher.rotate_node("PROXY") is True
+        async def __aexit__(self, *args):
+            return False
+
+        async def get(self, url, **kwargs):
+            calls.append(("get", url))
+            return _Resp({"proxies": {
+                "PROXY": {"type": "Selector", "all": ["A", "DIRECT", "Sub", "B"], "now": "A"},
+                "A": {"type": "Vless"},
+                "B": {"type": "Vless"},
+                "DIRECT": {"type": "Direct"},
+                "Sub": {"type": "Selector"},
+            }})
+
+        async def put(self, url, **kwargs):
+            calls.append(("put", kwargs.get("json")))
+            return _Resp()
+
+    monkeypatch.setattr(fetcher.httpx, "AsyncClient", FakeClient)
+    assert rotate_node("PROXY") is True
     # 跳过当前节点、DIRECT 与策略组，选择 B
     assert calls[1] == ("put", {"name": "B"})
 
 
 def test_rotate_node_no_candidates(monkeypatch):
-    def fake_get(url, **kwargs):
-        return _Resp({"proxies": {
-            "PROXY": {"type": "Selector", "all": ["A", "DIRECT"], "now": "A"},
-            "A": {"type": "Vless"},
-            "DIRECT": {"type": "Direct"},
-        }})
+    class FakeClient:
+        def __init__(self, **kwargs):
+            pass
 
-    def fake_put(url, **kwargs):
-        raise AssertionError("没有可换节点时不该 PUT")
+        async def __aenter__(self):
+            return self
 
-    monkeypatch.setattr(fetcher.httpx, "get", fake_get)
-    monkeypatch.setattr(fetcher.httpx, "put", fake_put)
-    assert fetcher.rotate_node("PROXY") is False
+        async def __aexit__(self, *args):
+            return False
+
+        async def get(self, url, **kwargs):
+            return _Resp({"proxies": {
+                "PROXY": {"type": "Selector", "all": ["A", "DIRECT"], "now": "A"},
+                "A": {"type": "Vless"},
+                "DIRECT": {"type": "Direct"},
+            }})
+
+        async def put(self, url, **kwargs):
+            raise AssertionError("没有可换节点时不该 PUT")
+
+    monkeypatch.setattr(fetcher.httpx, "AsyncClient", FakeClient)
+    assert rotate_node("PROXY") is False
 
 
 def test_rotate_node_failure_is_silent(monkeypatch):
-    def boom(*args, **kwargs):
-        raise RuntimeError("clash 没开")
+    class FakeClient:
+        def __init__(self, **kwargs):
+            pass
 
-    monkeypatch.setattr(fetcher.httpx, "get", boom)
-    assert fetcher.rotate_node("PROXY") is False
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return False
+
+        async def get(self, url, **kwargs):
+            raise RuntimeError("clash 没开")
+
+    monkeypatch.setattr(fetcher.httpx, "AsyncClient", FakeClient)
+    assert rotate_node("PROXY") is False
 
 
 def test_fetch_rotate_uses_given_group(monkeypatch):
@@ -172,11 +236,11 @@ def test_fetch_rotate_uses_given_group(monkeypatch):
         raise fetcher._TierFail("HTTP 403")
 
     for tier in fetcher.TIERS:
-        monkeypatch.setitem(fetcher._TIER_FUNCS, tier, fail)
-    monkeypatch.setattr(fetcher, "rotate_node", lambda group=None: seen.append(group) or False)
+        monkeypatch.setitem(fetcher._TIER_FUNCS, tier, async_call(fail))
+    monkeypatch.setattr(fetcher, "rotate_node", async_call(lambda group=None: seen.append(group) or False))
 
     with pytest.raises(fetcher.FetchFailed):
-        fetcher.fetch("https://rotate.example.com/", route=config.Route.FORCE,
+        fetch("https://rotate.example.com/", route=config.Route.FORCE,
                       rotate_on_block=True, rotate_group="测试策略组")
     assert seen == ["测试策略组"]
 
@@ -186,9 +250,9 @@ def test_fetch_all_tiers_fail(monkeypatch):
         raise fetcher._TierFail("HTTP 403")
 
     for tier in fetcher.TIERS:
-        monkeypatch.setitem(fetcher._TIER_FUNCS, tier, fail)
+        monkeypatch.setitem(fetcher._TIER_FUNCS, tier, async_call(fail))
     with pytest.raises(fetcher.FetchFailed):
-        fetcher.fetch("https://down.example.com/")
+        fetch("https://down.example.com/")
 
 
 def test_force_raises_proxy_down_when_proxy_unreachable(monkeypatch):
@@ -196,10 +260,10 @@ def test_force_raises_proxy_down_when_proxy_unreachable(monkeypatch):
         raise fetcher._TierFail("connect: refused")
 
     for tier in fetcher.TIERS:
-        monkeypatch.setitem(fetcher._TIER_FUNCS, tier, fail)
+        monkeypatch.setitem(fetcher._TIER_FUNCS, tier, async_call(fail))
     # FORCE 只有代理一条 leg，连不上直接 ProxyDown，不回落直连
     with pytest.raises(fetcher.ProxyDown):
-        fetcher.fetch("https://force.example.com/", route=config.Route.FORCE)
+        fetch("https://force.example.com/", route=config.Route.FORCE)
 
 
 def test_auto_falls_back_to_direct_leg(monkeypatch):
@@ -213,9 +277,9 @@ def test_auto_falls_back_to_direct_leg(monkeypatch):
         return FakeRes(text="<html>ok</html>")
 
     for tier in fetcher.TIERS:
-        monkeypatch.setitem(fetcher._TIER_FUNCS, tier, fake)
+        monkeypatch.setitem(fetcher._TIER_FUNCS, tier, async_call(fake))
 
-    fetched = fetcher.fetch("https://auto.example.com/", route=config.Route.AUTO)
+    fetched = fetch("https://auto.example.com/", route=config.Route.AUTO)
     assert fetched.tier in TIERS
     assert fetcher.LEG_PROXY in seen and fetcher.LEG_DIRECT in seen
     assert seen.index(fetcher.LEG_PROXY) < seen.index(fetcher.LEG_DIRECT)
@@ -229,11 +293,11 @@ def test_auto_does_not_fall_back_on_block(monkeypatch):
         raise fetcher._TierFail("HTTP 403")
 
     for tier in fetcher.TIERS:
-        monkeypatch.setitem(fetcher._TIER_FUNCS, tier, fake)
+        monkeypatch.setitem(fetcher._TIER_FUNCS, tier, async_call(fake))
 
     # 403 说明代理本身是通的，回落直连没有意义
     with pytest.raises(fetcher.FetchFailed):
-        fetcher.fetch("https://blocked.example.com/", route=config.Route.AUTO)
+        fetch("https://blocked.example.com/", route=config.Route.AUTO)
     assert seen == [fetcher.LEG_PROXY] * len(TIERS)
 
 
@@ -245,10 +309,10 @@ def test_direct_route_never_touches_proxy(monkeypatch):
         raise fetcher._TierFail("connect: refused")
 
     for tier in fetcher.TIERS:
-        monkeypatch.setitem(fetcher._TIER_FUNCS, tier, fake)
+        monkeypatch.setitem(fetcher._TIER_FUNCS, tier, async_call(fake))
 
     with pytest.raises(fetcher.FetchFailed):
-        fetcher.fetch("https://direct.example.com/", route=config.Route.DIRECT)
+        fetch("https://direct.example.com/", route=config.Route.DIRECT)
     assert set(seen) == {fetcher.LEG_DIRECT}
 
 
@@ -261,14 +325,14 @@ def test_proxy_down_short_circuits_following_sites(monkeypatch):
         raise fetcher._TierFail("connect: refused")
 
     for tier in fetcher.TIERS:
-        monkeypatch.setitem(fetcher._TIER_FUNCS, tier, fake)
+        monkeypatch.setitem(fetcher._TIER_FUNCS, tier, async_call(fake))
 
     with pytest.raises(fetcher.FetchFailed):
-        fetcher.fetch("https://first.example.com/", route=config.Route.AUTO)
+        fetch("https://first.example.com/", route=config.Route.AUTO)
 
     seen.clear()
     with pytest.raises(fetcher.FetchFailed):
-        fetcher.fetch("https://second.example.com/", route=config.Route.AUTO)
+        fetch("https://second.example.com/", route=config.Route.AUTO)
     # 第一站已确认代理不通，第二站不再等代理连接超时
     assert fetcher.LEG_PROXY not in seen
 
@@ -276,7 +340,7 @@ def test_proxy_down_short_circuits_following_sites(monkeypatch):
 def test_force_skipped_immediately_when_proxy_known_down(monkeypatch):
     monkeypatch.setattr(fetcher, "_PROXY_DOWN", True)
     with pytest.raises(fetcher.ProxyDown):
-        fetcher.fetch("https://force.example.com/", route=config.Route.FORCE)
+        fetch("https://force.example.com/", route=config.Route.FORCE)
 
 
 def test_http_clients_ignore_env_proxy(monkeypatch):
@@ -286,14 +350,14 @@ def test_http_clients_ignore_env_proxy(monkeypatch):
         def __init__(self, **kwargs):
             captured.append(kwargs)
 
-        def close(self):
+        async def aclose(self):
             pass
 
-    monkeypatch.setattr(fetcher.httpx, "Client", FakeClient)
+    monkeypatch.setattr(fetcher.httpx, "AsyncClient", FakeClient)
     monkeypatch.setattr(fetcher, "_clients", {})
     fetcher._client_for(config.Route.DIRECT)
     fetcher._client_for(config.Route.AUTO)
-    fetcher.close_all()
+    close_all()
     assert captured[0]["trust_env"] is False
     assert "proxy" not in captured[0]
     assert captured[1]["trust_env"] is False
@@ -303,7 +367,7 @@ def test_http_clients_ignore_env_proxy(monkeypatch):
 def test_browser_failure_isolated_per_route(monkeypatch):
     import types
 
-    def launch(**kwargs):
+    async def launch(**kwargs):
         if "proxy" in kwargs:
             raise RuntimeError("proxy browser failed")
         return object()
@@ -314,16 +378,20 @@ def test_browser_failure_isolated_per_route(monkeypatch):
         def stop(self):
             pass
 
-    monkeypatch.setattr(fetcher, "sync_playwright", lambda: types.SimpleNamespace(start=lambda: FakePW()))
+    class Starter:
+        async def start(self):
+            return FakePW()
+
+    monkeypatch.setattr(fetcher, "async_playwright", lambda: Starter())
     monkeypatch.setattr(fetcher, "_pw", None)
     monkeypatch.setattr(fetcher, "_pw_browsers", {})
     monkeypatch.setattr(fetcher, "_pw_broken", {})
 
     with pytest.raises(fetcher._TierFail):
-        fetcher._ensure_browser(config.Route.AUTO)
+        ensure_browser(config.Route.AUTO)
     assert "proxy" in fetcher._pw_broken
     # 代理浏览器失败不应影响直连浏览器
-    assert fetcher._ensure_browser(config.Route.DIRECT) is not None
+    assert ensure_browser(config.Route.DIRECT) is not None
 
 
 def test_connect_timeout_counts_as_connect(monkeypatch):
@@ -332,7 +400,7 @@ def test_connect_timeout_counts_as_connect(monkeypatch):
 
     monkeypatch.setattr(fetcher, "_http_get", boom)
     with pytest.raises(fetcher._TierFail) as exc:
-        fetcher._tier_httpx("https://x.example/", None, fetcher.LEG_DIRECT)
+        tier_httpx("https://x.example/", None, fetcher.LEG_DIRECT)
     # 连不上代理：应计入 connect，才能触发 ProxyDown / 熔断
     assert exc.value.reason.startswith("connect:")
 
@@ -343,7 +411,7 @@ def test_read_timeout_not_counted_as_connect(monkeypatch):
 
     monkeypatch.setattr(fetcher, "_http_get", boom)
     with pytest.raises(fetcher._TierFail) as exc:
-        fetcher._tier_httpx("https://x.example/", None, fetcher.LEG_DIRECT)
+        tier_httpx("https://x.example/", None, fetcher.LEG_DIRECT)
     # 连接已建立只是站慢：不能算出口不通，否则会误触发全局熔断
     assert exc.value.reason.startswith("timeout:")
 
@@ -355,11 +423,11 @@ def test_direct_leg_does_not_rotate_node(monkeypatch):
         raise fetcher._TierFail("HTTP 403")
 
     for tier in fetcher.TIERS:
-        monkeypatch.setitem(fetcher._TIER_FUNCS, tier, fail)
-    monkeypatch.setattr(fetcher, "rotate_node", lambda group=None: rotated.append(group) or True)
+        monkeypatch.setitem(fetcher._TIER_FUNCS, tier, async_call(fail))
+    monkeypatch.setattr(fetcher, "rotate_node", async_call(lambda group=None: rotated.append(group) or True))
 
     with pytest.raises(fetcher.FetchFailed):
-        fetcher.fetch("https://direct403.example.com/",
+        fetch("https://direct403.example.com/",
                       route=config.Route.DIRECT, rotate_on_block=True)
     # 直连失败与 Clash 节点无关，不该动用户的节点
     assert rotated == []
@@ -369,13 +437,13 @@ def test_close_all_resets_broken_state(monkeypatch):
     monkeypatch.setattr(fetcher, "_pw_broken", {"proxy": "boom"})
     monkeypatch.setattr(fetcher, "_pw_browsers", {})
     monkeypatch.setattr(fetcher, "_pw", None)
-    fetcher.close_all()
+    close_all()
     assert fetcher._pw_broken == {}
 
 
 def test_close_all_resets_proxy_down(monkeypatch):
     monkeypatch.setattr(fetcher, "_PROXY_DOWN", True)
-    fetcher.close_all()
+    close_all()
     assert fetcher._PROXY_DOWN is False
 
 
@@ -389,7 +457,7 @@ def test_browser_cached_per_route(monkeypatch):
             pass
 
     class FakeChromium:
-        def launch(self, **kwargs):
+        async def launch(self, **kwargs):
             launches.append(kwargs)
             return FakeBrowser()
 
@@ -399,14 +467,18 @@ def test_browser_cached_per_route(monkeypatch):
         def stop(self):
             pass
 
-    monkeypatch.setattr(fetcher, "sync_playwright", lambda: types.SimpleNamespace(start=lambda: FakePW()))
+    class Starter:
+        async def start(self):
+            return FakePW()
+
+    monkeypatch.setattr(fetcher, "async_playwright", lambda: Starter())
     monkeypatch.setattr(fetcher, "_pw", None)
     monkeypatch.setattr(fetcher, "_pw_browsers", {})
     monkeypatch.setattr(fetcher, "_pw_broken", {})
 
-    direct = fetcher._ensure_browser(config.Route.DIRECT)
-    proxy = fetcher._ensure_browser(config.Route.AUTO)
-    again = fetcher._ensure_browser(config.Route.DIRECT)
+    direct = ensure_browser(config.Route.DIRECT)
+    proxy = ensure_browser(config.Route.AUTO)
+    again = ensure_browser(config.Route.DIRECT)
 
     assert direct is again and direct is not proxy
     assert len(launches) == 2
@@ -428,11 +500,11 @@ def test_cffi_session_ignores_env_proxy(monkeypatch):
         def close(self):
             pass
 
-    monkeypatch.setattr(fetcher, "cffi_requests", types.SimpleNamespace(Session=FakeSession))
+    monkeypatch.setattr(fetcher, "cffi_requests", types.SimpleNamespace(AsyncSession=FakeSession))
     monkeypatch.setattr(fetcher, "_cffi_sessions", {})
     fetcher._cffi_session(config.Route.DIRECT)
     fetcher._cffi_session(config.Route.AUTO)
-    fetcher.close_all()
+    close_all()
 
     assert captured[0]["trust_env"] is False               # 直连不读 HTTP(S)_PROXY
     assert captured[0]["proxies"] == {"http": "", "https": ""}   # 显式置空，覆盖 libcurl 的环境代理
@@ -456,20 +528,20 @@ class _FakePage:
         self.status = status
         self.waits = 0
 
-    def goto(self, url, **kwargs):
+    async def goto(self, url, **kwargs):
         import types
         return types.SimpleNamespace(status=self.status,
                                      headers={"content-type": "text/html; charset=utf-8"})
 
-    def content(self):
+    async def content(self):
         value = self._contents[min(self._idx, len(self._contents) - 1)]
         self._idx += 1
         return value
 
-    def wait_for_timeout(self, ms):
+    async def wait_for_timeout(self, ms):
         self.waits += 1
 
-    def close(self):
+    async def close(self):
         pass
 
 
@@ -477,7 +549,7 @@ class _FakeBrowser:
     def __init__(self, page):
         self.page = page
 
-    def new_page(self):
+    async def new_page(self):
         return self.page
 
 
@@ -491,9 +563,9 @@ def _normal_html():
 
 def test_playwright_waits_for_challenge_to_clear(monkeypatch):
     page = _FakePage([_challenge_html(), _challenge_html(), _normal_html()])
-    monkeypatch.setattr(fetcher, "_ensure_browser", lambda route: _FakeBrowser(page))
+    monkeypatch.setattr(fetcher, "_ensure_browser", async_call(lambda route: _FakeBrowser(page)))
     monkeypatch.setattr(config, "PLAYWRIGHT_CHALLENGE_WAIT", 5)
-    res = fetcher._tier_playwright("https://cf.example.com/", None, config.Route.AUTO)
+    res = tier_playwright("https://cf.example.com/", None, config.Route.AUTO)
     assert res.status_code == 200
     assert "Dashboard" in res.text
     assert page.waits == 2
@@ -501,17 +573,17 @@ def test_playwright_waits_for_challenge_to_clear(monkeypatch):
 
 def test_playwright_gives_up_when_challenge_stuck(monkeypatch):
     page = _FakePage([_challenge_html()] * 10)
-    monkeypatch.setattr(fetcher, "_ensure_browser", lambda route: _FakeBrowser(page))
+    monkeypatch.setattr(fetcher, "_ensure_browser", async_call(lambda route: _FakeBrowser(page)))
     monkeypatch.setattr(config, "PLAYWRIGHT_CHALLENGE_WAIT", 3)
     with pytest.raises(fetcher._TierFail):
-        fetcher._tier_playwright("https://cf.example.com/", None, config.Route.AUTO)
+        tier_playwright("https://cf.example.com/", None, config.Route.AUTO)
     assert page.waits == 3
 
 
 def test_playwright_no_wait_on_normal_page(monkeypatch):
     page = _FakePage([_normal_html()], status=200)
-    monkeypatch.setattr(fetcher, "_ensure_browser", lambda route: _FakeBrowser(page))
-    res = fetcher._tier_playwright("https://cf.example.com/", None, config.Route.AUTO)
+    monkeypatch.setattr(fetcher, "_ensure_browser", async_call(lambda route: _FakeBrowser(page)))
+    res = tier_playwright("https://cf.example.com/", None, config.Route.AUTO)
     assert res.status_code == 200
     assert page.waits == 0
 
@@ -532,27 +604,27 @@ def test_playwright_uses_storage_state(monkeypatch, tmp_path):
     closed = {"ctx": False}
 
     class _Ctx:
-        def new_page(self):
+        async def new_page(self):
             return page
 
-        def close(self):
+        async def close(self):
             closed["ctx"] = True
 
     class _Browser:
         def __init__(self):
             self.kwargs = None
 
-        def new_context(self, **kwargs):
+        async def new_context(self, **kwargs):
             self.kwargs = kwargs
             return _Ctx()
 
-        def new_page(self):
+        async def new_page(self):
             raise AssertionError("配置了 storage_state 时应走 new_context")
 
     browser = _Browser()
-    monkeypatch.setattr(fetcher, "_ensure_browser", lambda route: browser)
+    monkeypatch.setattr(fetcher, "_ensure_browser", async_call(lambda route: browser))
     monkeypatch.setattr(config, "PLAYWRIGHT_STORAGE_STATE", str(state))
-    res = fetcher._tier_playwright("https://cf.example.com/", None, config.Route.AUTO)
+    res = tier_playwright("https://cf.example.com/", None, config.Route.AUTO)
     assert res.status_code == 200
     assert browser.kwargs == {"storage_state": str(state)}
     assert closed["ctx"] is True
@@ -563,28 +635,28 @@ def test_playwright_context_uses_configured_ua(monkeypatch):
     closed = {"ctx": False}
 
     class _Ctx:
-        def new_page(self):
+        async def new_page(self):
             return page
 
-        def close(self):
+        async def close(self):
             closed["ctx"] = True
 
     class _Browser:
         def __init__(self):
             self.kwargs = None
 
-        def new_context(self, **kwargs):
+        async def new_context(self, **kwargs):
             self.kwargs = kwargs
             return _Ctx()
 
-        def new_page(self):
+        async def new_page(self):
             raise AssertionError("配置 UA 时应走 new_context")
 
     browser = _Browser()
-    monkeypatch.setattr(fetcher, "_ensure_browser", lambda route: browser)
+    monkeypatch.setattr(fetcher, "_ensure_browser", async_call(lambda route: browser))
     monkeypatch.setattr(config, "HTTP_USER_AGENT", "MyUA/1.0")
     monkeypatch.setattr(config, "PLAYWRIGHT_STORAGE_STATE", "")
-    res = fetcher._tier_playwright("https://cf.example.com/", None, config.Route.AUTO)
+    res = tier_playwright("https://cf.example.com/", None, config.Route.AUTO)
     assert res.status_code == 200
     assert browser.kwargs == {"user_agent": "MyUA/1.0"}
     assert closed["ctx"] is True

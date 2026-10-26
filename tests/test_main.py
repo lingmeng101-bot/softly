@@ -1,5 +1,15 @@
+import asyncio
+
 import config
 import main as main_mod
+
+
+async def _noop():
+    pass
+
+
+async def _fake_close_all():
+    pass
 
 
 class _FakeConn:
@@ -18,9 +28,9 @@ def _setup(monkeypatch):
     monkeypatch.setattr(main_mod, "setup_logger", lambda: None)
     monkeypatch.setattr(main_mod, "log_tiers", lambda: None)
     monkeypatch.setattr(main_mod, "init_db", lambda: _FakeConn())
-    monkeypatch.setattr(main_mod, "close_all", lambda: None)
+    monkeypatch.setattr(main_mod, "close_all", _fake_close_all)
 
-    def fake_crawl(target, conn):
+    async def fake_crawl(target, conn):
         calls.append(target.url)
         return main_mod.CrawlStats(added=1)
 
@@ -35,7 +45,7 @@ def test_main_passes_target_through_without_route_override(monkeypatch):
         "auto": config.Target("https://auto.example.com/", route=config.Route.AUTO),
         "direct": config.Target("https://direct.example.com/", route=config.Route.DIRECT),
     })
-    main_mod.main()
+    asyncio.run(main_mod.main())
     # main 不预判网络环境，路由完全交给 target
     assert calls == [
         "https://force.example.com/",
@@ -51,7 +61,7 @@ def test_inactive_target_skipped(monkeypatch):
         "empty": config.Target(""),
         "on": config.Target("https://on.example.com/"),
     })
-    main_mod.main()
+    asyncio.run(main_mod.main())
     assert calls == ["https://on.example.com/"]
 
 
@@ -62,9 +72,9 @@ def test_one_failed_target_does_not_stop_the_batch(monkeypatch):
     monkeypatch.setattr(main_mod, "setup_logger", lambda: None)
     monkeypatch.setattr(main_mod, "log_tiers", lambda: None)
     monkeypatch.setattr(main_mod, "init_db", lambda: conn)
-    monkeypatch.setattr(main_mod, "close_all", lambda: None)
+    monkeypatch.setattr(main_mod, "close_all", _fake_close_all)
 
-    def crawl(target, conn):
+    async def crawl(target, conn):
         calls.append(target.url)
         if "b" in target.url:
             raise RuntimeError("模拟解析器/翻页/入库抛异常")
@@ -75,7 +85,7 @@ def test_one_failed_target_does_not_stop_the_batch(monkeypatch):
         k: config.Target(f"https://{k}.example/") for k in "abc"
     })
 
-    main_mod.main()
+    asyncio.run(main_mod.main())
 
     assert calls == ["https://a.example/", "https://b.example/", "https://c.example/"]
     assert conn.rollbacks == 1          # 失败目标的事务已回滚
@@ -85,11 +95,13 @@ def test_stats_accumulated_across_targets(monkeypatch):
     monkeypatch.setattr(main_mod, "setup_logger", lambda: None)
     monkeypatch.setattr(main_mod, "log_tiers", lambda: None)
     monkeypatch.setattr(main_mod, "init_db", lambda: _FakeConn())
-    monkeypatch.setattr(main_mod, "close_all", lambda: None)
+    monkeypatch.setattr(main_mod, "close_all", _fake_close_all)
 
     seen = []
-    monkeypatch.setattr(main_mod, "crawl_and_save",
-                        lambda target, conn: main_mod.CrawlStats(added=2, skipped=1))
+    async def fake_crawl(target, conn):
+        return main_mod.CrawlStats(added=2, skipped=1)
+
+    monkeypatch.setattr(main_mod, "crawl_and_save", fake_crawl)
 
     real_info = main_mod.log.info
     main_mod.log.info = lambda fmt, *a: seen.append((fmt, a))
@@ -98,7 +110,7 @@ def test_stats_accumulated_across_targets(monkeypatch):
             "a": config.Target("https://a.example.com/"),
             "b": config.Target("https://b.example.com/"),
         })
-        main_mod.main()
+        asyncio.run(main_mod.main())
     finally:
         main_mod.log.info = real_info
 

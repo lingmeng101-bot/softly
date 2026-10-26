@@ -1,3 +1,4 @@
+import asyncio
 import logging
 
 import config
@@ -14,7 +15,7 @@ def _stats_line(counter: dict[str, int]) -> str:
     return " ".join(f"{tier}={counter.get(tier, 0)}" for tier in config.FETCH_TIERS)
 
 
-def main() -> None:
+async def main() -> None:
     setup_logger()
     log_tiers()
     conn = init_db()
@@ -28,7 +29,7 @@ def main() -> None:
             log.info("=== %s  %s route=%s fetch_detail=%s",
                      name, target.url, target.route, target.fetch_detail)
             try:
-                total += crawl_and_save(target, conn)
+                total += await crawl_and_save(target, conn)
             except Exception:
                 # 单站失败不终止整批；已提交的页数据保留，未提交的回滚
                 failed.append(name)
@@ -39,7 +40,7 @@ def main() -> None:
                     pass
     finally:
         conn.close()
-        close_all()
+        await close_all()
     log.info("全部跑完：新增 %d，拦截 %d（已入库），跳过 %d，异常 %d，解析错 %d",
              total.added, total.blocked, total.skipped, total.bad, total.parse_error)
     log.info("[stats] %s", _stats_line(TIER_HITS))
@@ -47,4 +48,4 @@ def main() -> None:
         log.warning("失败目标 %d/%d: %s", len(failed), len(config.TARGETS), ", ".join(failed))
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())

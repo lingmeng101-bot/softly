@@ -1,5 +1,3 @@
-
-
 from urllib.parse import urljoin
 
 from bs4 import BeautifulSoup
@@ -28,7 +26,6 @@ def parse_list(html: str, source: str) -> list[dict]:
     records = []
 
     for item in soup.select(LIST_ITEM):
-
         month = _text(item.select_one("div.text-ldata p"))
         day = _text(item.select_one("div.text-ldata span"))
         full_day = f"{month}-{day}" if month and day else ""
@@ -45,12 +42,14 @@ def parse_list(html: str, source: str) -> list[dict]:
         if not title or not href:
             continue
 
-        records.append({
-            "publish_time": full_day,
-            "title": title,
-            "summary": summary,
-            "url": urljoin(source, href),
-        })
+        records.append(
+            {
+                "publish_time": full_day,
+                "title": title,
+                "summary": summary,
+                "url": urljoin(source, href),
+            }
+        )
 
     return records
 

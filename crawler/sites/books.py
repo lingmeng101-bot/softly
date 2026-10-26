@@ -1,5 +1,3 @@
-
-
 import logging
 from urllib.parse import urljoin
 
@@ -7,7 +5,7 @@ from bs4 import BeautifulSoup
 
 import config
 
-log = logging.getLogger(config.Log.LOG_NAME)     # logger 命名空间
+log = logging.getLogger(config.Log.LOG_NAME)  # logger 命名空间
 
 RATING_MAP = {"One": 1, "Two": 2, "Three": 3, "Four": 4, "Five": 5}
 
@@ -50,14 +48,16 @@ def parse_list(html: str, source: str) -> list[dict]:
             if not name or not href:
                 continue
 
-            records.append({
-                "title": name,
-                "price": price,
-                "stock": stock,
-                "star": star,
-                "img": urljoin(source, img_tag.get("src", "")) if img_tag else "",
-                "url": urljoin(source, href),      # ← 铁律：每条必须有 url
-            })
+            records.append(
+                {
+                    "title": name,
+                    "price": price,
+                    "stock": stock,
+                    "star": star,
+                    "img": urljoin(source, img_tag.get("src", "")) if img_tag else "",
+                    "url": urljoin(source, href),  # ← 铁律：每条必须有 url
+                }
+            )
         return records
     except Exception:
         log.exception("解析异常 source=%s", source)

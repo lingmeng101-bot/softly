@@ -1,4 +1,3 @@
-
 import re
 from urllib.parse import urljoin
 
@@ -28,10 +27,12 @@ def parse_list(data, source: str) -> list[dict]:
         title = _rendered(item.get("title"))
         if not url or not title:
             continue
-        records.append({
-            "publish_time": str(item.get("date") or "")[:10],
-            "title": title,
-            "summary": _rendered(item.get("excerpt"))[:60],
-            "url": url,
-        })
+        records.append(
+            {
+                "publish_time": str(item.get("date") or "")[:10],
+                "title": title,
+                "summary": _rendered(item.get("excerpt"))[:60],
+                "url": url,
+            }
+        )
     return records

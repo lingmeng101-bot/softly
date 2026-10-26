@@ -1,44 +1,38 @@
 import asyncio
+import contextlib
+import importlib
 import inspect
 import json
 import logging
 import os
 import random
 import re
-import time
 import weakref
-from typing import NamedTuple
+from typing import Any, NamedTuple
 
 import httpx
 from charset_normalizer import detect
-from tenacity import (
-    retry,
-    stop_after_attempt,
-    wait_random_exponential,
-    retry_if_exception,
-    before_sleep_log
-)
+from tenacity import before_sleep_log, retry, retry_if_exception, stop_after_attempt, wait_random_exponential
+
 import config
-from config import USER_AGENTS, DEFAULT_HEADERS, Log, Route
+from config import DEFAULT_HEADERS, USER_AGENTS, Log, Route
 from crawler.sites import host_of
 
 log = logging.getLogger(Log.LOG_NAME)
 
+
 # ---- 可选依赖：缺失时跳过对应层级 ----
-try:
-    from curl_cffi import requests as cffi_requests
-except ImportError:
-    cffi_requests = None
+def _optional_module(name: str) -> Any:
+    try:
+        return importlib.import_module(name)
+    except ImportError:
+        return None
 
-try:
-    import httpcloak
-except ImportError:
-    httpcloak = None
 
-try:
-    from playwright.async_api import async_playwright
-except ImportError:
-    async_playwright = None
+cffi_requests: Any = _optional_module("curl_cffi.requests")
+httpcloak: Any = _optional_module("httpcloak")
+_playwright_async: Any = _optional_module("playwright.async_api")
+async_playwright: Any = getattr(_playwright_async, "async_playwright", None) if _playwright_async else None
 
 
 # curl_cffi / httpcloak 自带与指纹匹配的请求头，此处仅透传业务字段
@@ -64,7 +58,7 @@ class _TierFail(Exception):
 
 
 class Fetched(NamedTuple):
-    res: object
+    res: Any
     tier: str
     attempts: list[tuple[str, str]]
 
@@ -136,18 +130,20 @@ def _slice_business(headers: dict | None) -> dict:
     return {k: v for k, v in headers.items() if k.lower() in _BUSINESS_HEADERS}
 
 
-def autodetect(content:bytes)->str :
-    result=detect(content)
-    if (result.get("confidence") or 0) < 0.5 :
+def autodetect(content: bytes) -> str:
+    result = detect(content)
+    confidence = float(result.get("confidence") or 0)
+    if confidence < 0.5:
         return "utf-8"
-    return result.get('encoding') or 'utf-8'
+    encoding = result.get("encoding")
+    return encoding if isinstance(encoding, str) else "utf-8"
 
 
 # 构造请求头（默认头 + 随机 UA）
-def build_header(headers:dict|None =None) -> dict[str, str]:
-    h=dict(DEFAULT_HEADERS)
+def build_header(headers: dict | None = None) -> dict[str, str]:
+    h = dict(DEFAULT_HEADERS)
     # 人工完成验证后可指定与浏览器一致的 UA 和 Cookie
-    h['User-Agent'] = config.HTTP_USER_AGENT or random.choice(USER_AGENTS)
+    h["User-Agent"] = config.HTTP_USER_AGENT or random.choice(USER_AGENTS)
     if config.HTTP_COOKIE:
         h["Cookie"] = config.HTTP_COOKIE
     if headers:
@@ -163,10 +159,10 @@ def build_header(headers:dict|None =None) -> dict[str, str]:
 class _Runtime:
     def __init__(self):
         self.clients: dict[str, httpx.AsyncClient] = {}
-        self.cffi_sessions: dict[str, object] = {}
-        self.cloak_sessions: dict[str, object] = {}
-        self.pw = None
-        self.pw_browsers: dict[str, object] = {}
+        self.cffi_sessions: dict[str, Any] = {}
+        self.cloak_sessions: dict[str, Any] = {}
+        self.pw: Any = None
+        self.pw_browsers: dict[str, Any] = {}
         self.pw_broken: dict[str, str] = {}
         self.browser_locks: dict[str, asyncio.Lock] = {}
         self.httpcloak_lock = asyncio.Lock()
@@ -192,13 +188,14 @@ LEG_DIRECT = "direct"
 
 _LEGS: dict[Route, tuple[str, ...]] = {
     Route.DIRECT: (LEG_DIRECT,),
-    Route.AUTO:   (LEG_PROXY, LEG_DIRECT),
-    Route.FORCE:  (LEG_PROXY,),
+    Route.AUTO: (LEG_PROXY, LEG_DIRECT),
+    Route.FORCE: (LEG_PROXY,),
 }
+
 
 def _leg_of(route) -> str:
     # 接受 Route 或 leg 字符串，统一成 leg
-    if route == LEG_DIRECT or route == LEG_PROXY:
+    if route in (LEG_DIRECT, LEG_PROXY):
         return route
     return LEG_DIRECT if Route(route) == Route.DIRECT else LEG_PROXY
 
@@ -217,25 +214,23 @@ def _client_for(route) -> httpx.AsyncClient:
     rt = _runtime()
     client = rt.clients.get(key)
     if client is None:
-        kw = dict(
+        client = httpx.AsyncClient(
             default_encoding=autodetect,
             timeout=httpx.Timeout(connect=5, read=10, write=10, pool=5),
             follow_redirects=True,
-            trust_env=False,   # 不读取 HTTP(S)_PROXY 环境变量，直连才是真直连
+            trust_env=False,  # 不读取 HTTP(S)_PROXY 环境变量，直连才是真直连
+            proxy=config.PROXY_HTTP if key == LEG_PROXY else None,
         )
-        if key == LEG_PROXY:
-            kw["proxy"] = config.PROXY_HTTP
-        client = httpx.AsyncClient(**kw)
         rt.clients[key] = client
     return client
 
 
 def _should_retry(exc: BaseException) -> bool:
-    if isinstance (exc,httpx.RequestError):
+    if isinstance(exc, httpx.RequestError):
         return True
-    if isinstance (exc,httpx.HTTPStatusError):
-        code=exc.response.status_code
-        return code == 429 or 500<=code<600
+    if isinstance(exc, httpx.HTTPStatusError):
+        code = exc.response.status_code
+        return code == 429 or 500 <= code < 600
     return False
 
 
@@ -275,8 +270,7 @@ def _is_challenge(res) -> bool:
     return _challenge_hit(res) is not None
 
 
-_CHALLENGE_TEXT = ("just a moment", "attention required", "cf-challenge", "cf_chl_",
-                   "checking your browser")
+_CHALLENGE_TEXT = ("just a moment", "attention required", "cf-challenge", "cf_chl_", "checking your browser")
 
 
 def _page_challenge(html: str) -> bool:
@@ -313,39 +307,37 @@ def _classify(res, tier: str) -> None:
 
 # ---------------- T0：httpx ----------------
 
+
 async def _tier_httpx(url: str, headers, route):
     try:
         res = await _http_get(url, headers, route)
     except httpx.HTTPStatusError as e:
         _classify(e.response, "httpx")
-        raise _TierFail(f"HTTP {e.response.status_code}")
+        raise _TierFail(f"HTTP {e.response.status_code}") from e
     except httpx.ConnectError as e:
-        raise _TierFail("connect: " + _short(e))
+        raise _TierFail("connect: " + _short(e)) from e
     except httpx.ConnectTimeout as e:
-        raise _TierFail("connect: " + _short(e))
+        raise _TierFail("connect: " + _short(e)) from e
     except httpx.TimeoutException as e:
         # 读取/写入超时说明连接已建立，不能算作出口不通
-        raise _TierFail("timeout: " + _short(e))
+        raise _TierFail("timeout: " + _short(e)) from e
     except httpx.RequestError as e:
-        raise _TierFail("error: " + type(e).__name__)
+        raise _TierFail("error: " + type(e).__name__) from e
     _classify(res, "httpx")
     return res
 
 
 # ---------------- T1：curl_cffi ----------------
 
+
 def _cffi_session(route):
     key = _leg_of(route)
     rt = _runtime()
     session = rt.cffi_sessions.get(key)
     if session is None:
-        kw = dict(timeout=30, allow_redirects=True, trust_env=False)
-        if key == LEG_PROXY:
-            kw["proxies"] = {"http": config.PROXY_HTTP, "https": config.PROXY_HTTP}
-        else:
-            # libcurl 默认读取 HTTP(S)_PROXY 环境变量；显式置空才保证真正直连
-            kw["proxies"] = {"http": "", "https": ""}
-        session = cffi_requests.AsyncSession(**kw)
+        # libcurl 默认读取 HTTP(S)_PROXY 环境变量；直连时显式置空才保证真正直连
+        proxies = {"http": config.PROXY_HTTP, "https": config.PROXY_HTTP} if key == LEG_PROXY else {"http": "", "https": ""}
+        session = cffi_requests.AsyncSession(timeout=30, allow_redirects=True, trust_env=False, proxies=proxies)
         rt.cffi_sessions[key] = session
     return session
 
@@ -362,13 +354,14 @@ async def _tier_curl_cffi(url: str, headers, route):
         )
     except Exception as e:
         if _looks_connect(e):
-            raise _TierFail("connect: " + _short(e))
-        raise _TierFail(f"error {type(e).__name__}: {_short(e)}")
+            raise _TierFail("connect: " + _short(e)) from e
+        raise _TierFail(f"error {type(e).__name__}: {_short(e)}") from e
     _classify(res, "curl_cffi")
     return res
 
 
 # ---------------- T2：httpcloak ----------------
+
 
 def _httpcloak_ready() -> bool:
     try:
@@ -388,8 +381,8 @@ def _cloak_session(route):
             preset=config.HTTPCLOAK_PRESET,
             proxy=None if key == LEG_DIRECT else config.PROXY_HTTP,
             timeout=30,
-            http_version=config.HTTPCLOAK_HTTP_VERSION,   # HTTP/3 需要 UDP 中继，保持 auto 自动回落 h2
-            without_conditional_cache=True,   # 禁用条件缓存，避免重复请求返回 304 空 body
+            http_version=config.HTTPCLOAK_HTTP_VERSION,  # HTTP/3 需要 UDP 中继，保持 auto 自动回落 h2
+            without_conditional_cache=True,  # 禁用条件缓存，避免重复请求返回 304 空 body
         )
         rt.cloak_sessions[key] = session
     return session
@@ -400,18 +393,18 @@ async def _tier_httpcloak(url: str, headers, route):
     try:
         # httpcloak 没有异步接口；线程调用本身不是线程安全的，这里串行化
         async with _runtime().httpcloak_lock:
-            res = await asyncio.to_thread(
-                session.get, url, headers=_slice_business(headers) or None)
+            res = await asyncio.to_thread(session.get, url, headers=_slice_business(headers) or None)
     except Exception as e:
         if _looks_connect(e):
-            raise _TierFail("connect: " + _short(e))
-        raise _TierFail(f"error {type(e).__name__}: {_short(e)}")
+            raise _TierFail("connect: " + _short(e)) from e
+        raise _TierFail(f"error {type(e).__name__}: {_short(e)}") from e
     res.headers = _flat_headers(res.headers)
     _classify(res, "httpcloak")
     return res
 
 
 # ---------------- T3：playwright ----------------
+
 
 async def _ensure_browser(route):
     key = _leg_of(route)
@@ -434,22 +427,23 @@ async def _ensure_browser(route):
         try:
             if rt.pw is None:
                 rt.pw = await async_playwright().start()
-            kwargs = dict(
-                headless=config.PLAYWRIGHT_HEADLESS,
-                args=["--disable-blink-features=AutomationControlled"],
-            )
+            args = ["--disable-blink-features=AutomationControlled"]
             # 代理在 launch 时绑定，直连与代理需分别启动浏览器实例
             if key == LEG_PROXY:
-                kwargs["proxy"] = {"server": config.PROXY_HTTP}
+                browser = await rt.pw.chromium.launch(
+                    headless=config.PLAYWRIGHT_HEADLESS,
+                    args=args,
+                    proxy={"server": config.PROXY_HTTP},
+                )
             else:
                 # 直连时禁用浏览器自身的系统代理
-                kwargs["args"].append("--no-proxy-server")
-            browser = await rt.pw.chromium.launch(**kwargs)
+                args.append("--no-proxy-server")
+                browser = await rt.pw.chromium.launch(headless=config.PLAYWRIGHT_HEADLESS, args=args)
             rt.pw_browsers[key] = browser
         except Exception as e:
             rt.pw_broken[key] = f"{type(e).__name__}: {_short(e)}"
             log.warning("[降级] playwright 启动失败（%s），跳过该路由的该层: %s", key, _short(e))
-            raise _TierFail("playwright 不可用: " + rt.pw_broken[key])
+            raise _TierFail("playwright 不可用: " + rt.pw_broken[key]) from e
     return browser
 
 
@@ -473,8 +467,7 @@ async def _tier_playwright(url: str, headers, route):
         else:
             page = await browser.new_page()
         try:
-            resp = await page.goto(url, wait_until=config.PLAYWRIGHT_WAIT,
-                                   timeout=config.PLAYWRIGHT_TIMEOUT_MS)
+            resp = await page.goto(url, wait_until=config.PLAYWRIGHT_WAIT, timeout=config.PLAYWRIGHT_TIMEOUT_MS)
             status = resp.status if resp else 200
             html = await page.content()
             # 挑战页返回 403 是常态，给浏览器留出执行 JS 并重载的时间
@@ -488,8 +481,7 @@ async def _tier_playwright(url: str, headers, route):
                         status = 200
                         break
                 else:
-                    log.warning("[降级] playwright 挑战未通过（等待 %ss）: %s",
-                                waited, url)
+                    log.warning("[降级] playwright 挑战未通过（等待 %ss）: %s", waited, url)
             res = BrowserResponse(
                 html,
                 status,
@@ -503,7 +495,7 @@ async def _tier_playwright(url: str, headers, route):
     except _TierFail:
         raise
     except Exception as e:
-        raise _TierFail(f"error {type(e).__name__}: {_short(e)}")
+        raise _TierFail(f"error {type(e).__name__}: {_short(e)}") from e
     _classify(res, "playwright")
     return res
 
@@ -549,9 +541,8 @@ def _start_tier(url: str, min_tier: str | None) -> str:
     host = host_of(url)
     hint = _TIER_HINT.get(host)
     start = hint if hint in TIER_INDEX else TIERS[0]
-    if min_tier and min_tier in TIER_INDEX:
-        if TIER_INDEX[min_tier] > TIER_INDEX[start]:
-            start = min_tier
+    if min_tier and min_tier in TIER_INDEX and TIER_INDEX[min_tier] > TIER_INDEX[start]:
+        start = min_tier
     return start
 
 
@@ -580,16 +571,18 @@ async def rotate_node(group: str | None = None) -> bool:
             cur = data.get("now")
             # 仅选取真实节点，排除策略组与 DIRECT/REJECT
             candidates = [
-                name for name in (data.get("all") or [])
-                if isinstance(name, str) and name != cur and name not in _NOT_A_NODE
+                name
+                for name in (data.get("all") or [])
+                if isinstance(name, str)
+                and name != cur
+                and name not in _NOT_A_NODE
                 and (proxies.get(name) or {}).get("type") not in _GROUP_TYPES
             ]
             if not candidates:
                 log.info("换节点跳过：组 %s 没有可切换的节点", group)
                 return False
             nxt = candidates[0]
-            await client.put(f"{config.CLASH_API}/proxies/{group}", headers=headers,
-                             json={"name": nxt}, timeout=3)
+            await client.put(f"{config.CLASH_API}/proxies/{group}", headers=headers, json={"name": nxt}, timeout=3)
         log.warning("换节点: %s  %s → %s", group, cur, nxt)
         return True
     except Exception as e:
@@ -597,9 +590,9 @@ async def rotate_node(group: str | None = None) -> bool:
         return False
 
 
-async def _fetch_leg(url: str, headers, min_tier, leg: str, rotate_on_block: bool,
-                     rotate_group: str | None, host: str,
-                     attempts: list[tuple[str, str]]) -> Fetched:
+async def _fetch_leg(
+    url: str, headers, min_tier, leg: str, rotate_on_block: bool, rotate_group: str | None, host: str, attempts: list[tuple[str, str]]
+) -> Fetched:
     # 单条 leg 内按降级链顺序尝试；连接类失败累计成 ProxyDown 交给上层换 leg
     start = _start_tier(url, min_tier)
     connect_fails = 0
@@ -619,7 +612,7 @@ async def _fetch_leg(url: str, headers, min_tier, leg: str, rotate_on_block: boo
             log.warning("[降级] %s  %s/%s → %s  原因=%s", host, leg, tier, nxt, e.reason)
             # 代理不可用时后续层级同样超时，提前终止
             if leg == LEG_PROXY and connect_fails >= 2:
-                raise ProxyDown(f"{host} 连续 {connect_fails} 层连接失败: {e.reason}")
+                raise ProxyDown(f"{host} 连续 {connect_fails} 层连接失败: {e.reason}") from e
             continue
 
         _remember_tier(host, tier)
@@ -628,21 +621,19 @@ async def _fetch_leg(url: str, headers, min_tier, leg: str, rotate_on_block: boo
 
     # 全部层级失败且原因为 403 时换节点，再按原顺序重试一遍
     # 只对代理 leg 换节点：直连失败与 Clash 节点无关
-    if leg == LEG_PROXY and rotate_on_block and "HTTP 403" in last_reason:
-        if await rotate_node(rotate_group):
-            for tier in TIERS[TIER_INDEX[start]:]:
-                try:
-                    res = await _TIER_FUNCS[tier](url, headers, leg)
-                except _TierFail as e:
-                    attempts.append((f"{tier}(换节点)", e.reason))
-                    continue
-                _remember_tier(host, tier)
-                TIER_HITS[tier] = TIER_HITS.get(tier, 0) + 1
-                return Fetched(res, tier, attempts)
+    if leg == LEG_PROXY and rotate_on_block and "HTTP 403" in last_reason and await rotate_node(rotate_group):
+        for tier in TIERS[TIER_INDEX[start] :]:
+            try:
+                res = await _TIER_FUNCS[tier](url, headers, leg)
+            except _TierFail as e:
+                attempts.append((f"{tier}(换节点)", e.reason))
+                continue
+            _remember_tier(host, tier)
+            TIER_HITS[tier] = TIER_HITS.get(tier, 0) + 1
+            return Fetched(res, tier, attempts)
 
     # 整个 leg 全是连接类失败，说明这条出口本身不通（而非站点拦你）
-    if leg == LEG_PROXY and leg_attempts and all(
-            r.startswith("connect") for _, r in leg_attempts):
+    if leg == LEG_PROXY and leg_attempts and all(r.startswith("connect") for _, r in leg_attempts):
         raise ProxyDown(f"{host} 代理出口全部连接失败: {last_reason}")
 
     raise FetchFailed(f"{host} 降级链全灭（leg={leg} 起始 {start}）: {last_reason or '无可用层'}")
@@ -667,8 +658,7 @@ async def fetch(
     attempts: list[tuple[str, str]] = []
     for leg in legs:
         try:
-            return await _fetch_leg(url, headers, min_tier, leg, rotate_on_block,
-                                    rotate_group, host, attempts)
+            return await _fetch_leg(url, headers, min_tier, leg, rotate_on_block, rotate_group, host, attempts)
         except ProxyDown as e:
             rt.proxy_down = True
             if leg == legs[-1]:
@@ -682,33 +672,25 @@ async def close_all() -> None:
     loop = asyncio.get_running_loop()
     rt = _runtime()
     for client in rt.clients.values():
-        try:
+        with contextlib.suppress(Exception):
             await client.aclose()
-        except Exception:
-            pass
     rt.clients.clear()
     for session in rt.cffi_sessions.values():
-        try:
+        with contextlib.suppress(Exception):
             res = session.close()
             if inspect.isawaitable(res):
                 await res
-        except Exception:
-            pass
     rt.cffi_sessions.clear()
     for session in rt.cloak_sessions.values():
-        try:
+        with contextlib.suppress(Exception):
             # httpcloak 的 close 是同步的（只释放本地资源）
             session.close()
-        except Exception:
-            pass
     rt.cloak_sessions.clear()
     for browser in rt.pw_browsers.values():
-        try:
+        with contextlib.suppress(Exception):
             await browser.close()
-        except Exception:
-            pass
     rt.pw_browsers.clear()
-    rt.pw_broken.clear()   # 允许下次重新尝试启动
+    rt.pw_broken.clear()  # 允许下次重新尝试启动
     rt.browser_locks.clear()
     rt.proxy_down = False  # 下一轮重新判定
     if rt.pw is not None:

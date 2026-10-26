@@ -38,7 +38,7 @@ def parse_list(html: str, source: str) -> list[dict]:
         if li:
             text = li.get_text(" ", strip=True)
             if text.startswith(title):
-                summary = text[len(title):].lstrip("：: ").strip()
+                summary = text[len(title) :].lstrip("：: ").strip()
         records.append({"url": url, "title": title, "summary": summary or None})
     return records
 

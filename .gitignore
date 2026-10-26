@@ -14,6 +14,11 @@ data/
 # 密钥
 .env
 
+# 工具缓存
+.ruff_cache/
+.mypy_cache/
+.pytest_cache/
+
 # 编辑器
 .idea/
 .vscode/

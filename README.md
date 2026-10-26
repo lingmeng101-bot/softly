@@ -82,6 +82,17 @@ CLASH_GROUP=🚀 节点选择
 pytest -q
 ```
 
+## 质量检查
+
+```
+pip install -r requirements-dev.txt
+ruff check .
+ruff format --check .
+mypy
+```
+
+配置见 [pyproject.toml](pyproject.toml)。
+
 
 ## 说明
 

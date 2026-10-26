@@ -4,7 +4,7 @@ import types
 import config
 import pipeline
 import storage
-from crawler.fetcher import TIERS, FetchFailed, Fetched
+from crawler.fetcher import TIERS, Fetched, FetchFailed
 from models import Article
 
 
@@ -15,6 +15,7 @@ def run(coro):
 def async_fetch(fn):
     async def wrapper(*args, **kwargs):
         return fn(*args, **kwargs)
+
     return wrapper
 
 
@@ -156,7 +157,7 @@ def test_parse_error_suppresses_content_downgrade(tmp_path, monkeypatch):
     conn = db(tmp_path, monkeypatch)
     stats = run(pipeline.crawl_and_save(target(), conn))
     assert stats.parse_error == 1
-    assert calls == [None]          # 未触发第二次（min_tier）请求
+    assert calls == [None]  # 未触发第二次（min_tier）请求
     conn.close()
 
 
@@ -169,12 +170,13 @@ def test_api_error_stops_before_parse(tmp_path, monkeypatch):
 
     payload = {"code": 403, "msg": "forbidden"}
     monkeypatch.setattr(pipeline, "sniff", lambda res: "json")
-    monkeypatch.setattr(pipeline, "fetch", async_fetch(lambda url, **kw: fetched(
-        FakeRes(text='{"code":403}', ct="application/json", payload=payload))))
+    monkeypatch.setattr(
+        pipeline, "fetch", async_fetch(lambda url, **kw: fetched(FakeRes(text='{"code":403}', ct="application/json", payload=payload)))
+    )
     monkeypatch.setattr(pipeline, "get_parser", lambda url: make_mod(fake_parse))
     conn = db(tmp_path, monkeypatch)
     stats = run(pipeline.crawl_and_save(target(), conn))
-    assert got == [[]]              # 解析器收到空列表
+    assert got == [[]]  # 解析器收到空列表
     assert stats.added == 0
     conn.close()
 
@@ -191,7 +193,7 @@ def test_next_page_same_url_stops(tmp_path, monkeypatch):
     mod = make_mod(lambda payload, source: [], next_page=lambda html, source: "https://fake.example.com/list")
     monkeypatch.setattr(pipeline, "get_parser", lambda url: mod)
     conn = db(tmp_path, monkeypatch)
-    stats = run(pipeline.crawl_and_save(target(max_pages=5), conn))
+    run(pipeline.crawl_and_save(target(max_pages=5), conn))
     assert len(calls) == 1
     conn.close()
 
@@ -236,12 +238,14 @@ def test_content_downgrade_once(tmp_path, monkeypatch):
     assert len(calls) == 2 and calls[0] is None and calls[1] == TIERS[1]
     conn.close()
 
+
 def _detail_fetch(detail_calls, detail_html="<html>detail</html>"):
     def fake_fetch(url, **kw):
         if url.startswith("https://a.com/"):
             detail_calls.append(url)
             return fetched(FakeRes(text=detail_html, url=url))
         return fetched(FakeRes(text="<html>ok</html>"))
+
     return fake_fetch
 
 
@@ -296,7 +300,7 @@ def test_fetch_detail_failure_keeps_list_content(tmp_path, monkeypatch):
 
 def test_fetch_detail_without_parse_detail_is_skipped(tmp_path, monkeypatch):
     detail_calls = []
-    mod = make_mod(lambda payload, source: [ITEM])          # 未实现 parse_detail
+    mod = make_mod(lambda payload, source: [ITEM])  # 未实现 parse_detail
     monkeypatch.setattr(pipeline, "fetch", async_fetch(_detail_fetch(detail_calls)))
     monkeypatch.setattr(pipeline, "looks_like_shell", lambda res: False)
     monkeypatch.setattr(pipeline, "get_parser", lambda url: mod)
@@ -321,6 +325,7 @@ def test_fetch_detail_second_run_does_not_refetch(tmp_path, monkeypatch):
     assert len(detail_calls) == 1
     conn.close()
 
+
 def test_route_override_is_passed_to_fetch(tmp_path, monkeypatch):
     seen = []
 
@@ -335,6 +340,7 @@ def test_route_override_is_passed_to_fetch(tmp_path, monkeypatch):
     run(pipeline.crawl_and_save(target(), conn, route=config.Route.DIRECT))
     assert seen == [config.Route.DIRECT]
     conn.close()
+
 
 def test_fetch_detail_failure_marks_empty_and_retries(tmp_path, monkeypatch):
     calls = []
@@ -360,7 +366,7 @@ def test_fetch_detail_failure_marks_empty_and_retries(tmp_path, monkeypatch):
 
     second = run(pipeline.crawl_and_save(target(fetch_detail=True), conn))
     assert second.added == 1 and second.skipped == 0
-    assert len(calls) == 2          # 上轮为 empty，本轮重新抓取详情
+    assert len(calls) == 2  # 上轮为 empty，本轮重新抓取详情
     conn.close()
 
 
@@ -406,7 +412,7 @@ def test_fetch_detail_retries_after_refresh_days(tmp_path, monkeypatch):
 
     second = run(pipeline.crawl_and_save(target(fetch_detail=True), conn))
     assert second.added == 1
-    assert len(detail_calls) == 2      # 超过刷新周期，重新抓详情
+    assert len(detail_calls) == 2  # 超过刷新周期，重新抓详情
     conn.close()
 
 
@@ -424,7 +430,7 @@ def test_fetch_detail_refresh_can_be_disabled(tmp_path, monkeypatch):
     conn.execute("update articles set fetched_at='2000-01-01T00:00:00'")
     conn.commit()
     second = run(pipeline.crawl_and_save(target(fetch_detail=True), conn))
-    assert second.skipped == 1 and len(detail_calls) == 1   # 关闭后只按存在性判重
+    assert second.skipped == 1 and len(detail_calls) == 1  # 关闭后只按存在性判重
     conn.close()
 
 

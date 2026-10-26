@@ -1,12 +1,13 @@
-from pathlib import Path
 import logging
 import sys
+from pathlib import Path
+
 from config import Log
 
-BASE_DIR=Path(__file__).resolve().parent
+BASE_DIR = Path(__file__).resolve().parent
 
 
-def setup_logger(log_level: int=Log.LOG_LEVEL,log_file: Path| str=BASE_DIR / Log.LOG_FILE) -> logging.Logger:
+def setup_logger(log_level: int = Log.LOG_LEVEL, log_file: Path | str = BASE_DIR / Log.LOG_FILE) -> logging.Logger:
     logger = logging.getLogger(Log.LOG_NAME)
     logger.setLevel(log_level)
     logger.propagate = False
@@ -15,20 +16,17 @@ def setup_logger(log_level: int=Log.LOG_LEVEL,log_file: Path| str=BASE_DIR / Log
     if logger.handlers:
         return logger
 
-    fmt=logging.Formatter(
-        Log.LOG_FORMAT,
-        datefmt=Log.LOG_DATEFMT
-    )
+    fmt = logging.Formatter(Log.LOG_FORMAT, datefmt=Log.LOG_DATEFMT)
 
     try:
-        fh=logging.FileHandler(log_file, encoding="utf-8")
+        fh = logging.FileHandler(log_file, encoding="utf-8")
         fh.setFormatter(fmt)
         logger.addHandler(fh)
     except OSError as e:
         print(f"警告：日志文件 {log_file} 打不开（{e}），本次只输出到屏幕", file=sys.stderr)
 
     if sys.stdout is not None:
-        ch=logging.StreamHandler(sys.stdout)
+        ch = logging.StreamHandler(sys.stdout)
         ch.setFormatter(fmt)
         logger.addHandler(ch)
 

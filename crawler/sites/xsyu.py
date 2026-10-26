@@ -1,4 +1,3 @@
-
 from urllib.parse import urljoin
 
 from bs4 import BeautifulSoup
@@ -36,11 +35,13 @@ def parse_list(html: str, source: str) -> list[dict]:
         if not title:
             continue
 
-        records.append({
-            "publish_time": day,
-            "title": title,
-            "url": urljoin(source, href),
-        })
+        records.append(
+            {
+                "publish_time": day,
+                "title": title,
+                "url": urljoin(source, href),
+            }
+        )
 
     return records
 

@@ -1,0 +1,36 @@
+[project]
+name = "softly"
+version = "0.1.0"
+description = "多站点爬虫（全链路异步）"
+requires-python = ">=3.12"
+
+[tool.ruff]
+line-length = 140
+target-version = "py312"
+extend-exclude = ["data", ".git", "__pycache__", ".pytest_cache", ".ruff_cache"]
+
+[tool.ruff.lint]
+# 只保留与可维护性/正确性强相关的规则集；风格类交给 ruff format。
+# 不启用 BLE001 / DTZ / N818：
+#   - fetch 降级链与清理路径的 broad except 是有意的容错设计；
+#   - 数据库时间戳沿用本地 naive 时间，保持与已有数据一致；
+#   - FetchFailed / ProxyDown 是领域语义命名，不改名。
+select = ["E", "W", "F", "I", "UP", "B", "C4", "SIM", "S110"]
+ignore = ["E501"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["B011"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.mypy]
+python_version = "3.12"
+files = [
+    "config.py", "main.py", "pipeline.py", "storage.py", "hashing.py",
+    "paginator.py", "models.py", "log.py", "crawler",
+]
+ignore_missing_imports = true
+check_untyped_defs = true
+warn_unused_ignores = true
+warn_redundant_casts = true

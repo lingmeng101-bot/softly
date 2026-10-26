@@ -1,8 +1,8 @@
+import logging
+import os
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
-import logging
-import os
 
 BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
@@ -29,36 +29,43 @@ _load_env(BASE_DIR / ".env")
 MAX_PAGES_HARD = 50
 DEFAULT_MAX_PAGES = 1
 DEFAULT_FETCH_DETAIL = False
-DETAIL_REFRESH_DAYS = 7   # fetch_detail 模式下超过该天数重抓详情；0 表示不按时间重抓
+DETAIL_REFRESH_DAYS = 7  # fetch_detail 模式下超过该天数重抓详情；0 表示不按时间重抓
 
 # 目标级并发：1 = 顺序执行（默认，行为与改造前一致）；>1 时每个目标独立 SQLite 连接并发抓取
 MAX_CONCURRENT_TARGETS = max(1, int(os.environ.get("MAX_CONCURRENT_TARGETS", "1") or "1"))
 
 # ---- 代理（Clash） ----
 # 本机相关配置从 .env 读取，以下为缺省值
-PROXY_HTTP   = os.environ.get("PROXY_HTTP", "http://127.0.0.1:7897")    # Clash Verge 混合端口
-PROXY_SOCKS  = os.environ.get("PROXY_SOCKS", "socks5://127.0.0.1:7891") # 仅在需要 UDP/QUIC 时使用
-CLASH_API    = os.environ.get("CLASH_API", "http://127.0.0.1:9097")     # external-controller 地址
-CLASH_SECRET = os.environ.get("CLASH_SECRET", "")                       # 与「API 访问密钥」一致；为空则不携带认证头
-CLASH_GROUP  = os.environ.get("CLASH_GROUP", "🚀 节点选择")              # 节点切换使用的策略组名
+PROXY_HTTP = os.environ.get("PROXY_HTTP", "http://127.0.0.1:7897")  # Clash Verge 混合端口
+PROXY_SOCKS = os.environ.get("PROXY_SOCKS", "socks5://127.0.0.1:7891")  # 仅在需要 UDP/QUIC 时使用
+CLASH_API = os.environ.get("CLASH_API", "http://127.0.0.1:9097")  # external-controller 地址
+CLASH_SECRET = os.environ.get("CLASH_SECRET", "")  # 与「API 访问密钥」一致；为空则不携带认证头
+CLASH_GROUP = os.environ.get("CLASH_GROUP", "🚀 节点选择")  # 节点切换使用的策略组名
 
 # ---- 降级链 ----
 FETCH_TIERS = ("httpx", "curl_cffi", "httpcloak", "playwright")
 BLOCKED_CODES = {403, 412, 429, 451, 503}
 CHALLENGE_MARKERS = (
-    "just a moment", "attention required", "cf-challenge", "cf_chl_",
-    "checking your browser", "enable javascript and cookies",
-    "请稍候", "安全验证", "人机验证", "访问异常",
+    "just a moment",
+    "attention required",
+    "cf-challenge",
+    "cf_chl_",
+    "checking your browser",
+    "enable javascript and cookies",
+    "请稍候",
+    "安全验证",
+    "人机验证",
+    "访问异常",
 )
-CURL_CFFI_IMPERSONATE = "chrome120"       # 部分站点会拒绝最新指纹，使用 chrome120 兼容
+CURL_CFFI_IMPERSONATE = "chrome120"  # 部分站点会拒绝最新指纹，使用 chrome120 兼容
 HTTPCLOAK_PRESET = "chrome-latest"
-HTTPCLOAK_HTTP_VERSION = "auto"           # HTTP/3 需要 UDP 中继，机场通常不保证，保持 auto 自动回落 h2
+HTTPCLOAK_HTTP_VERSION = "auto"  # HTTP/3 需要 UDP 中继，机场通常不保证，保持 auto 自动回落 h2
 
 # ---- playwright ----
 PLAYWRIGHT_HEADLESS = True
-PLAYWRIGHT_WAIT = "domcontentloaded"       # 需要等 JS 的站可改 "networkidle"
+PLAYWRIGHT_WAIT = "domcontentloaded"  # 需要等 JS 的站可改 "networkidle"
 PLAYWRIGHT_TIMEOUT_MS = 20000
-PLAYWRIGHT_CHALLENGE_WAIT = 15   # 浏览器遇到 Cloudflare 挑战页时最多等待的秒数
+PLAYWRIGHT_CHALLENGE_WAIT = 15  # 浏览器遇到 Cloudflare 挑战页时最多等待的秒数
 
 # 需要人工完成验证的站点：复用浏览器会话，不做任何 JS 绕过
 # HTTP_COOKIE 供 T0 使用；PLAYWRIGHT_STORAGE_STATE 供 T3 使用（浏览器导出的 cookies JSON）
@@ -69,14 +76,14 @@ PLAYWRIGHT_ROTATE_ON_BLOCK = False
 
 
 class Route(StrEnum):
-    AUTO   = "auto"       # 尝试序列：代理 → 直连；代理连接失败才回落直连
-    DIRECT = "direct"     # 尝试序列：只直连
-    FORCE  = "force"      # 尝试序列：只走代理，不回落直连
+    AUTO = "auto"  # 尝试序列：代理 → 直连；代理连接失败才回落直连
+    DIRECT = "direct"  # 尝试序列：只直连
+    FORCE = "force"  # 尝试序列：只走代理，不回落直连
 
 
 @dataclass
 class Target:
-    url: str = ''
+    url: str = ""
     enable: bool = True
     max_pages: int = DEFAULT_MAX_PAGES
     fetch_detail: bool = DEFAULT_FETCH_DETAIL
@@ -87,21 +94,22 @@ class Target:
     def active(self):
         return self.enable and self.url
 
+
 @dataclass
 class Log:
-    LOG_NAME: str = 'xun'
-    LOG_LEVEL: str = logging.INFO
-    LOG_FORMAT:str = "%(asctime)s - [%(filename)s:%(lineno)d] - %(name)s - %(levelname)s - %(message)s"
-    LOG_DATEFMT:str = "%Y-%m-%d %H:%M:%S"
-    LOG_FILE :str = "app.log"
+    LOG_NAME: str = "xun"
+    LOG_LEVEL: int = logging.INFO
+    LOG_FORMAT: str = "%(asctime)s - [%(filename)s:%(lineno)d] - %(name)s - %(levelname)s - %(message)s"
+    LOG_DATEFMT: str = "%Y-%m-%d %H:%M:%S"
+    LOG_FILE: str = "app.log"
 
 
-TARGETS:dict[str, Target] ={
-    "books":Target("https://books.toscrape.com/"),
+TARGETS: dict[str, Target] = {
+    "books": Target("https://books.toscrape.com/"),
     # 校园网直连更稳定；经代理出口可能触发校园风控
-    "ahszu":Target("https://www.ahszu.edu.cn/xxxw/tzgg.htm", route=Route.DIRECT),
-    "xsyu":Target("https://www.xsyu.edu.cn/xwzx/tzgg.htm", route=Route.DIRECT),
-    "30aitool.com":Target("https://www.30aitool.com/wp-json/wp/v2/tool"),
+    "ahszu": Target("https://www.ahszu.edu.cn/xxxw/tzgg.htm", route=Route.DIRECT),
+    "xsyu": Target("https://www.xsyu.edu.cn/xwzx/tzgg.htm", route=Route.DIRECT),
+    "30aitool.com": Target("https://www.30aitool.com/wp-json/wp/v2/tool"),
 }
 # skills.qiaomu.ai：按分类抓技能列表（详情页不抓）
 QIAOMU_CATEGORIES = (

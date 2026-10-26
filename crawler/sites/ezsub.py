@@ -30,11 +30,13 @@ def parse_list(html: str, source: str) -> list[dict]:
         old_price = _text(card.select_one(OLD_PRICE))
         discount = _text(card.select_one(DISCOUNT))
         summary = " | ".join(part for part in (price, old_price, discount) if part)
-        records.append({
-            "url": urljoin(source, href),
-            "title": title,
-            "summary": summary or None,
-        })
+        records.append(
+            {
+                "url": urljoin(source, href),
+                "title": title,
+                "summary": summary or None,
+            }
+        )
     return records
 
 

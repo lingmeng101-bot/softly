@@ -5,9 +5,17 @@ import storage
 
 
 def _save(conn, **kw):
-    args = dict(source="src", url="https://a.com/1", publish_time="2026-01-01",
-                title="标题", summary="摘要", content="正文", access_status="normal",
-                dedup_key="k1", content_hash="h1")
+    args = {
+        "source": "src",
+        "url": "https://a.com/1",
+        "publish_time": "2026-01-01",
+        "title": "标题",
+        "summary": "摘要",
+        "content": "正文",
+        "access_status": "normal",
+        "dedup_key": "k1",
+        "content_hash": "h1",
+    }
     args.update(kw)
     storage.save_article(conn, **args)
 
@@ -19,7 +27,7 @@ def test_save_then_read(tmp_path, monkeypatch):
     storage.commit_db(conn)
     state = storage.saved_state(conn, "k1")
     assert state[:2] == ("h1", "normal")
-    assert state[2]                    # fetched_at 非空
+    assert state[2]  # fetched_at 非空
     assert storage.saved_state(conn, "nope") == (None, None, None)
     conn.close()
 
@@ -71,8 +79,7 @@ def test_migrate_day_to_publish_time(tmp_path, monkeypatch):
 
     monkeypatch.setattr(config, "DB_NAME", db)
     conn = storage.init_db()
-    publish_time, error_msg = conn.execute(
-        "select publish_time, error_msg from articles where dedup_key='k1'").fetchone()
+    publish_time, error_msg = conn.execute("select publish_time, error_msg from articles where dedup_key='k1'").fetchone()
     assert publish_time == "2026-01-02"
     assert error_msg is None
     conn.close()

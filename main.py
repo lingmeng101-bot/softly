@@ -1,4 +1,5 @@
 import asyncio
+import contextlib
 import logging
 
 import config
@@ -16,8 +17,7 @@ def _stats_line(counter: dict[str, int]) -> str:
 
 
 def _log_target(name, target) -> None:
-    log.info("=== %s  %s route=%s fetch_detail=%s",
-             name, target.url, target.route, target.fetch_detail)
+    log.info("=== %s  %s route=%s fetch_detail=%s", name, target.url, target.route, target.fetch_detail)
 
 
 async def _crawl_sequential(targets, conn):
@@ -31,10 +31,8 @@ async def _crawl_sequential(targets, conn):
             # 单站失败不终止整批；已提交的页数据保留，未提交的回滚
             failed.append(name)
             log.exception("目标失败，继续下一个: %s", name)
-            try:
+            with contextlib.suppress(Exception):
                 conn.rollback()
-            except Exception:
-                pass
     return total, failed
 
 
@@ -49,10 +47,8 @@ async def _crawl_isolated(name, target):
     except Exception:
         ok = False
         log.exception("目标失败，继续下一个: %s", name)
-        try:
+        with contextlib.suppress(Exception):
             conn.rollback()
-        except Exception:
-            pass
     finally:
         conn.close()
     return name, stats, ok
@@ -99,11 +95,18 @@ async def main() -> None:
     finally:
         await close_all()
 
-    log.info("全部跑完：新增 %d，拦截 %d（已入库），跳过 %d，异常 %d，解析错 %d",
-             total.added, total.blocked, total.skipped, total.bad, total.parse_error)
+    log.info(
+        "全部跑完：新增 %d，拦截 %d（已入库），跳过 %d，异常 %d，解析错 %d",
+        total.added,
+        total.blocked,
+        total.skipped,
+        total.bad,
+        total.parse_error,
+    )
     log.info("[stats] %s", _stats_line(TIER_HITS))
     if failed:
         log.warning("失败目标 %d/%d: %s", len(failed), len(targets), ", ".join(failed))
+
 
 if __name__ == "__main__":
     asyncio.run(main())

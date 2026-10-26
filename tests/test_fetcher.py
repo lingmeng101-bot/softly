@@ -5,8 +5,15 @@ import pytest
 import config
 from crawler import fetcher
 from crawler.fetcher import (
-    BrowserResponse, TIERS, TIER_INDEX, _TIER_HINT, _challenge_hit, _is_challenge,
-    _remember_tier, _slice_business, _start_tier, looks_like_shell,
+    _TIER_HINT,
+    TIERS,
+    BrowserResponse,
+    _challenge_hit,
+    _is_challenge,
+    _remember_tier,
+    _slice_business,
+    _start_tier,
+    looks_like_shell,
 )
 
 
@@ -17,6 +24,7 @@ def run(coro):
 def async_call(fn):
     async def wrapper(*args, **kwargs):
         return fn(*args, **kwargs)
+
     return wrapper
 
 
@@ -111,7 +119,7 @@ def test_sticky_hint_only_goes_up():
     host = "hint.example.com"
     _TIER_HINT.pop(host, None)
     _remember_tier(host, TIERS[-1])
-    _remember_tier(host, TIERS[0])          # 粘滞策略不回退
+    _remember_tier(host, TIERS[0])  # 粘滞策略不回退
     assert _start_tier("https://" + host + "/x", None) == TIERS[-1]
 
 
@@ -138,6 +146,7 @@ def test_browser_response_interface():
         pass
     else:
         raise AssertionError("404 应该抛 FetchFailed")
+
 
 class _Resp:
     def __init__(self, data=None, status=200):
@@ -167,13 +176,17 @@ def test_rotate_node_skips_current_group_and_direct(monkeypatch):
 
         async def get(self, url, **kwargs):
             calls.append(("get", url))
-            return _Resp({"proxies": {
-                "PROXY": {"type": "Selector", "all": ["A", "DIRECT", "Sub", "B"], "now": "A"},
-                "A": {"type": "Vless"},
-                "B": {"type": "Vless"},
-                "DIRECT": {"type": "Direct"},
-                "Sub": {"type": "Selector"},
-            }})
+            return _Resp(
+                {
+                    "proxies": {
+                        "PROXY": {"type": "Selector", "all": ["A", "DIRECT", "Sub", "B"], "now": "A"},
+                        "A": {"type": "Vless"},
+                        "B": {"type": "Vless"},
+                        "DIRECT": {"type": "Direct"},
+                        "Sub": {"type": "Selector"},
+                    }
+                }
+            )
 
         async def put(self, url, **kwargs):
             calls.append(("put", kwargs.get("json")))
@@ -197,11 +210,15 @@ def test_rotate_node_no_candidates(monkeypatch):
             return False
 
         async def get(self, url, **kwargs):
-            return _Resp({"proxies": {
-                "PROXY": {"type": "Selector", "all": ["A", "DIRECT"], "now": "A"},
-                "A": {"type": "Vless"},
-                "DIRECT": {"type": "Direct"},
-            }})
+            return _Resp(
+                {
+                    "proxies": {
+                        "PROXY": {"type": "Selector", "all": ["A", "DIRECT"], "now": "A"},
+                        "A": {"type": "Vless"},
+                        "DIRECT": {"type": "Direct"},
+                    }
+                }
+            )
 
         async def put(self, url, **kwargs):
             raise AssertionError("没有可换节点时不该 PUT")
@@ -239,8 +256,7 @@ def test_fetch_rotate_uses_given_group(monkeypatch):
     monkeypatch.setattr(fetcher, "rotate_node", async_call(lambda group=None: seen.append(group) or False))
 
     with pytest.raises(fetcher.FetchFailed):
-        fetch("https://rotate.example.com/", route=config.Route.FORCE,
-                      rotate_on_block=True, rotate_group="测试策略组")
+        fetch("https://rotate.example.com/", route=config.Route.FORCE, rotate_on_block=True, rotate_group="测试策略组")
     assert seen == ["测试策略组"]
 
 
@@ -337,6 +353,8 @@ def test_proxy_down_short_circuits_following_sites(monkeypatch):
     run(scenario())
     # 第一站已确认代理不通，第二站不再等代理连接超时
     assert fetcher.LEG_PROXY not in seen
+
+
 def test_force_skipped_immediately_when_proxy_known_down():
     async def scenario():
         fetcher._runtime().proxy_down = True
@@ -344,6 +362,8 @@ def test_force_skipped_immediately_when_proxy_known_down():
 
     with pytest.raises(fetcher.ProxyDown):
         run(scenario())
+
+
 def test_http_clients_ignore_env_proxy(monkeypatch):
     captured = []
 
@@ -363,9 +383,11 @@ def test_http_clients_ignore_env_proxy(monkeypatch):
 
     run(scenario())
     assert captured[0]["trust_env"] is False
-    assert "proxy" not in captured[0]
+    assert captured[0]["proxy"] is None
     assert captured[1]["trust_env"] is False
     assert captured[1]["proxy"] == config.PROXY_HTTP
+
+
 def test_browser_failure_isolated_per_route(monkeypatch):
     import types
 
@@ -394,6 +416,8 @@ def test_browser_failure_isolated_per_route(monkeypatch):
         return await fetcher._ensure_browser(config.Route.DIRECT)
 
     assert run(scenario()) is not None
+
+
 def test_connect_timeout_counts_as_connect(monkeypatch):
     def boom(url, headers, route):
         raise fetcher.httpx.ConnectTimeout("connect timeout")
@@ -427,8 +451,7 @@ def test_direct_leg_does_not_rotate_node(monkeypatch):
     monkeypatch.setattr(fetcher, "rotate_node", async_call(lambda group=None: rotated.append(group) or True))
 
     with pytest.raises(fetcher.FetchFailed):
-        fetch("https://direct403.example.com/",
-                      route=config.Route.DIRECT, rotate_on_block=True)
+        fetch("https://direct403.example.com/", route=config.Route.DIRECT, rotate_on_block=True)
     # 直连失败与 Clash 节点无关，不该动用户的节点
     assert rotated == []
 
@@ -443,6 +466,8 @@ def test_close_all_resets_broken_state():
         return rt.pw_broken
 
     assert run(scenario()) == {}
+
+
 def test_close_all_resets_proxy_down():
     async def scenario():
         rt = fetcher._runtime()
@@ -451,8 +476,9 @@ def test_close_all_resets_proxy_down():
         return rt.proxy_down
 
     assert run(scenario()) is False
+
+
 def test_browser_cached_per_route(monkeypatch):
-    import types
 
     launches = []
 
@@ -487,9 +513,11 @@ def test_browser_cached_per_route(monkeypatch):
     assert direct is again and direct is not proxy
     assert len(launches) == 2
     assert "proxy" not in launches[0]
-    assert "--no-proxy-server" in launches[0]["args"]      # 直连禁用浏览器系统代理
+    assert "--no-proxy-server" in launches[0]["args"]  # 直连禁用浏览器系统代理
     assert launches[1]["proxy"] == {"server": config.PROXY_HTTP}
     assert "--no-proxy-server" not in launches[1]["args"]
+
+
 def test_cffi_session_ignores_env_proxy(monkeypatch):
     import types
 
@@ -511,10 +539,12 @@ def test_cffi_session_ignores_env_proxy(monkeypatch):
 
     run(scenario())
 
-    assert captured[0]["trust_env"] is False               # 直连不读 HTTP(S)_PROXY
-    assert captured[0]["proxies"] == {"http": "", "https": ""}   # 显式置空，覆盖 libcurl 的环境代理
+    assert captured[0]["trust_env"] is False  # 直连不读 HTTP(S)_PROXY
+    assert captured[0]["proxies"] == {"http": "", "https": ""}  # 显式置空，覆盖 libcurl 的环境代理
     assert captured[1]["trust_env"] is False
     assert captured[1]["proxies"] == {"http": config.PROXY_HTTP, "https": config.PROXY_HTTP}
+
+
 def test_looks_like_shell_link_variants():
     # <a 后接换行或直接 > 的写法也要能识别为链接
     newline_links = "<html><body>" + "<a\nhref='/x'>t</a>" * 6 + "y" * 4000 + "</body></html>"
@@ -533,8 +563,8 @@ class _FakePage:
 
     async def goto(self, url, **kwargs):
         import types
-        return types.SimpleNamespace(status=self.status,
-                                     headers={"content-type": "text/html; charset=utf-8"})
+
+        return types.SimpleNamespace(status=self.status, headers={"content-type": "text/html; charset=utf-8"})
 
     async def content(self):
         value = self._contents[min(self._idx, len(self._contents) - 1)]
@@ -557,11 +587,11 @@ class _FakeBrowser:
 
 
 def _challenge_html():
-    return '<!doctype html><html><title>Just a moment...</title></html>'
+    return "<!doctype html><html><title>Just a moment...</title></html>"
 
 
 def _normal_html():
-    return '<!doctype html><html><title>Dashboard</title><body>ok</body></html>'
+    return "<!doctype html><html><title>Dashboard</title><body>ok</body></html>"
 
 
 def test_playwright_waits_for_challenge_to_clear(monkeypatch):
@@ -664,6 +694,7 @@ def test_playwright_context_uses_configured_ua(monkeypatch):
     assert browser.kwargs == {"user_agent": "MyUA/1.0"}
     assert closed["ctx"] is True
 
+
 def test_httpcloak_disables_conditional_cache(monkeypatch):
     captured = []
 
@@ -681,6 +712,7 @@ def test_httpcloak_disables_conditional_cache(monkeypatch):
 
     run(scenario())
     assert captured and captured[0]["without_conditional_cache"] is True
+
 
 def test_runtime_state_isolated_between_event_loops(monkeypatch):
     def fake(url, headers, route):
@@ -704,7 +736,6 @@ def test_runtime_state_isolated_between_event_loops(monkeypatch):
 
 
 def test_browser_launch_is_locked_under_concurrency(monkeypatch):
-    import types
 
     launches = []
 
@@ -715,7 +746,7 @@ def test_browser_launch_is_locked_under_concurrency(monkeypatch):
     class FakeChromium:
         async def launch(self, **kwargs):
             launches.append(kwargs)
-            await asyncio.sleep(0.01)   # 放大竞态窗口
+            await asyncio.sleep(0.01)  # 放大竞态窗口
             return FakeBrowser()
 
     class FakePW:
@@ -767,10 +798,7 @@ def test_httpcloak_calls_are_serialized(monkeypatch):
     monkeypatch.setattr(fetcher, "httpcloak", _types.SimpleNamespace(Session=FakeSession))
 
     async def scenario():
-        await asyncio.gather(*(
-            fetcher._tier_httpcloak("https://x.example/", None, config.Route.DIRECT)
-            for _ in range(3)
-        ))
+        await asyncio.gather(*(fetcher._tier_httpcloak("https://x.example/", None, config.Route.DIRECT) for _ in range(3)))
 
     run(scenario())
-    assert peak == 1   # httpcloak 的线程调用必须串行
+    assert peak == 1  # httpcloak 的线程调用必须串行

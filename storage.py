@@ -62,18 +62,18 @@ def saved_state(conn: sqlite3.Connection, dedup_key: str) -> tuple[str | None, s
 
 # 写入：dedup_key 唯一，冲突时更新
 def save_article(
-        conn: sqlite3.Connection,
-        *,
-        source: str,
-        url: str,
-        publish_time: str | None,
-        title: str,
-        summary: str | None,
-        content: str,
-        access_status: str,
-        dedup_key: str,
-        content_hash: str,
-        error_msg: str | None = None,
+    conn: sqlite3.Connection,
+    *,
+    source: str,
+    url: str,
+    publish_time: str | None,
+    title: str,
+    summary: str | None,
+    content: str,
+    access_status: str,
+    dedup_key: str,
+    content_hash: str,
+    error_msg: str | None = None,
 ) -> None:
     conn.execute(
         """INSERT INTO articles (source, url, publish_time, title, summary, content, access_status, error_msg, fetched_at, dedup_key, content_hash)
@@ -88,8 +88,19 @@ def save_article(
                error_msg = excluded.error_msg,
                fetched_at = excluded.fetched_at,
                content_hash = excluded.content_hash""",
-        (source, url, publish_time, title, summary, content, access_status,
-         error_msg, datetime.now().isoformat(timespec="seconds"), dedup_key, content_hash)
+        (
+            source,
+            url,
+            publish_time,
+            title,
+            summary,
+            content,
+            access_status,
+            error_msg,
+            datetime.now().isoformat(timespec="seconds"),
+            dedup_key,
+            content_hash,
+        ),
     )
 
 

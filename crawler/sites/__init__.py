@@ -1,5 +1,6 @@
 from types import ModuleType
 from urllib.parse import urlparse
+
 from . import ahszu, aitool30, books, ezsub, generic, qiaomu, xsyu
 
 PARSERS: dict[str, ModuleType] = {

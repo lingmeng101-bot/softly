@@ -1,0 +1,4 @@
+# 开发/质量工具（运行期依赖见 requirements.txt）
+pytest>=7.4
+ruff>=0.8
+mypy>=1.0

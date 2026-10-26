@@ -1,5 +1,5 @@
 import logging
-from urllib.parse import urlsplit, urlunsplit, parse_qsl, urlencode
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from config import Log
 
@@ -7,7 +7,7 @@ log = logging.getLogger(Log.LOG_NAME)
 
 # 仅支持 page 型分页；offset 步长无法从 URL 推断
 ALIASES: dict[str, set[str]] = {
-    "page":   {"page", "p", "pg", "paged", "pageno", "pagenum", "pn", "pageindex"},
+    "page": {"page", "p", "pg", "paged", "pageno", "pagenum", "pn", "pageindex"},
 }
 LOOKUP = {a.lower(): std for std, names in ALIASES.items() for a in names}
 
@@ -24,8 +24,7 @@ def find_param(url: str):
 
 
 def _has_offset_param(url: str) -> bool:
-    return any(k.lower() in _OFFSET_NAMES
-               for k, v in parse_qsl(urlsplit(url).query, keep_blank_values=True))
+    return any(k.lower() in _OFFSET_NAMES for k, v in parse_qsl(urlsplit(url).query, keep_blank_values=True))
 
 
 def next_page_url(url: str) -> str | None:
@@ -38,6 +37,5 @@ def next_page_url(url: str) -> str | None:
     if std != "page" or not raw.isdigit():
         return None
     sp = urlsplit(url)
-    q = [(k, str(int(v) + 1) if k == key else v)
-         for k, v in parse_qsl(sp.query, keep_blank_values=True)]
+    q = [(k, str(int(v) + 1) if k == key else v) for k, v in parse_qsl(sp.query, keep_blank_values=True)]
     return urlunsplit((sp.scheme, sp.netloc, sp.path, urlencode(q), ""))

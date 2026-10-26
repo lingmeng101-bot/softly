@@ -2,15 +2,16 @@ import logging
 import sqlite3
 from dataclasses import asdict, dataclass, is_dataclass
 from datetime import datetime, timedelta
+from typing import Any
 
 import config
 import paginator
 from config import Log
-from crawler.fetcher import FetchFailed, ProxyDown, TIERS as FETCH_TIERS
-from crawler.fetcher import fetch, looks_like_shell
+from crawler.fetcher import TIERS as FETCH_TIERS
+from crawler.fetcher import FetchFailed, ProxyDown, fetch, looks_like_shell
 from crawler.guard import check
-from crawler.sniff import sniff
 from crawler.sites import get_parser, host_of
+from crawler.sniff import sniff
 from hashing import content_hash, dedup_key
 from storage import commit_db, save_article, saved_state
 
@@ -37,8 +38,8 @@ class CrawlStats:
         return self
 
 
-def as_dict(item) -> dict:
-    return asdict(item) if is_dataclass(item) else item
+def as_dict(item: Any) -> dict:
+    return asdict(item) if is_dataclass(item) else item  # type: ignore[call-overload]
 
 
 def as_text(value) -> str:
@@ -84,8 +85,7 @@ async def crawl_and_save(target, conn, route=None) -> CrawlStats:
         visited.add(url)
 
         try:
-            f = await fetch(url, route=fetch_route, rotate_group=target.rotate_group,
-                            rotate_on_block=config.PLAYWRIGHT_ROTATE_ON_BLOCK)
+            f = await fetch(url, route=fetch_route, rotate_group=target.rotate_group, rotate_on_block=config.PLAYWRIGHT_ROTATE_ON_BLOCK)
         except ProxyDown as e:
             log.error("代理不可用，本轮结束: %s (%s)", url, e)
             break
@@ -138,15 +138,20 @@ async def crawl_and_save(target, conn, route=None) -> CrawlStats:
             allow_downgrade = False
 
         # 内容层降级：200 但为空壳页面（列表由 JS 渲染）时，换下一层重取一次
-        if (not items and allow_downgrade and kind == "html" and f.tier in tiers
-                and tiers.index(f.tier) + 1 < len(tiers)
-                and looks_like_shell(res)):
+        if (
+            not items
+            and allow_downgrade
+            and kind == "html"
+            and f.tier in tiers
+            and tiers.index(f.tier) + 1 < len(tiers)
+            and looks_like_shell(res)
+        ):
             nxt = tiers[tiers.index(f.tier) + 1]
             log.warning("内容为空，改用 %s 重取: %s", nxt, url)
             try:
                 f = await fetch(url, min_tier=nxt, route=fetch_route, rotate_group=target.rotate_group)
                 res = f.res
-                #降级后重新判格式与接口错误，避免把 JSON 响应当 HTML 解析
+                # 降级后重新判格式与接口错误，避免把 JSON 响应当 HTML 解析
                 kind = sniff(res)
                 payload = res.text
                 if kind == "json":
@@ -185,8 +190,7 @@ async def crawl_and_save(target, conn, route=None) -> CrawlStats:
             # fetch_detail 模式下 content_hash 来自详情页正文，与列表页计算结果不一致；
             # 因此改为按 URL 是否存在且状态正常判重，避免重复抓取详情页
             if target.fetch_detail:
-                skip = (old_hash is not None and old_status not in RETRYABLE
-                        and not _detail_stale(old_fetched))
+                skip = old_hash is not None and old_status not in RETRYABLE and not _detail_stale(old_fetched)
             else:
                 skip = old_hash == chash and old_status not in RETRYABLE
             if skip:
@@ -247,16 +251,14 @@ async def crawl_and_save(target, conn, route=None) -> CrawlStats:
         commit_db(conn)
 
         # 翻页：优先使用站点自定义实现，否则尝试参数递增
-        if hasattr(mod, "next_page_url"):
-            nxt_url = mod.next_page_url(res.text, source=str(res.url))
-        else:
-            nxt_url = paginator.next_page_url(url)
+        nxt_url = mod.next_page_url(res.text, source=str(res.url)) if hasattr(mod, "next_page_url") else paginator.next_page_url(url)
         if not nxt_url or nxt_url == url or nxt_url in visited:
             log.info("翻页结束（%s）", "无下一页" if not nxt_url else "检测到环路")
             break
         url = nxt_url
         page += 1
 
-    log.info("本目标：新增 %d，拦截 %d，跳过 %d，异常 %d，解析错 %d",
-             stats.added, stats.blocked, stats.skipped, stats.bad, stats.parse_error)
+    log.info(
+        "本目标：新增 %d，拦截 %d，跳过 %d，异常 %d，解析错 %d", stats.added, stats.blocked, stats.skipped, stats.bad, stats.parse_error
+    )
     return stats

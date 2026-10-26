@@ -1,12 +1,12 @@
 import re
-from typing import Literal, Optional
+from typing import Literal
 
 import httpx
 
 MIME_RE = re.compile(r"[a-z0-9!#$&^_.+\-]+/[a-z0-9!#$&^_.+\-]+", re.I)
 
 
-def extract_mime(res: httpx.Response) -> Optional[str]:
+def extract_mime(res: httpx.Response) -> str | None:
     raw = res.headers.get("content-type", "")
     if not raw:
         return None

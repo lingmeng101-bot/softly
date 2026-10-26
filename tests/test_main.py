@@ -117,3 +117,47 @@ def test_stats_accumulated_across_targets(monkeypatch):
     summary = [args for fmt, args in seen if "全部跑完" in fmt]
     assert summary and summary[0][0] == 4      # added 2 + 2
     assert summary[0][2] == 2                  # skipped 1 + 1
+
+def test_concurrent_targets_use_isolated_connections(monkeypatch):
+    monkeypatch.setattr(config, "MAX_CONCURRENT_TARGETS", 3)
+    conns = []
+
+    class _Conn:
+        def __init__(self):
+            self.closed = False
+            self.rollbacks = 0
+
+        def close(self):
+            self.closed = True
+
+        def rollback(self):
+            self.rollbacks += 1
+
+    def fake_init_db():
+        conn = _Conn()
+        conns.append(conn)
+        return conn
+
+    calls = []
+
+    async def fake_crawl(target, conn):
+        calls.append(target.url)
+        if "b" in target.url:
+            raise RuntimeError("模拟单站失败")
+        return main_mod.CrawlStats(added=1)
+
+    monkeypatch.setattr(main_mod, "setup_logger", lambda: None)
+    monkeypatch.setattr(main_mod, "log_tiers", lambda: None)
+    monkeypatch.setattr(main_mod, "init_db", fake_init_db)
+    monkeypatch.setattr(main_mod, "close_all", _fake_close_all)
+    monkeypatch.setattr(main_mod, "crawl_and_save", fake_crawl)
+    monkeypatch.setattr(config, "TARGETS", {
+        k: config.Target(f"https://{k}.example/") for k in "abc"
+    })
+
+    asyncio.run(main_mod.main())
+
+    assert sorted(calls) == ["https://a.example/", "https://b.example/", "https://c.example/"]
+    assert len(conns) == 3                    # 每个目标独立连接
+    assert all(c.closed for c in conns)       # 全部释放
+    assert sum(c.rollbacks for c in conns) == 1  # 失败目标各自回滚

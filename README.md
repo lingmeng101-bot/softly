@@ -31,6 +31,8 @@ main.py
 
 Mermaid 源文件：[docs/flow.mmd](docs/flow.mmd)。
 
+并发：`MAX_CONCURRENT_TARGETS`（默认 1 = 顺序执行；>1 时每个目标使用独立 SQLite 连接并发抓取，可通过 `.env` 或环境变量设置）。
+
 ## 依赖
 
 ```

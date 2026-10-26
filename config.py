@@ -31,6 +31,9 @@ DEFAULT_MAX_PAGES = 1
 DEFAULT_FETCH_DETAIL = False
 DETAIL_REFRESH_DAYS = 7   # fetch_detail 模式下超过该天数重抓详情；0 表示不按时间重抓
 
+# 目标级并发：1 = 顺序执行（默认，行为与改造前一致）；>1 时每个目标独立 SQLite 连接并发抓取
+MAX_CONCURRENT_TARGETS = max(1, int(os.environ.get("MAX_CONCURRENT_TARGETS", "1") or "1"))
+
 # ---- 代理（Clash） ----
 # 本机相关配置从 .env 读取，以下为缺省值
 PROXY_HTTP   = os.environ.get("PROXY_HTTP", "http://127.0.0.1:7897")    # Clash Verge 混合端口

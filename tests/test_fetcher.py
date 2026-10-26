@@ -660,3 +660,18 @@ def test_playwright_context_uses_configured_ua(monkeypatch):
     assert res.status_code == 200
     assert browser.kwargs == {"user_agent": "MyUA/1.0"}
     assert closed["ctx"] is True
+
+def test_httpcloak_disables_conditional_cache(monkeypatch):
+    captured = []
+
+    class FakeSession:
+        def __init__(self, **kwargs):
+            captured.append(kwargs)
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(fetcher, "httpcloak", type("FakeHTTPCloak", (), {"Session": FakeSession}))
+    monkeypatch.setattr(fetcher, "_cloak_sessions", {})
+    fetcher._cloak_session(config.Route.DIRECT)
+    assert captured and captured[0]["without_conditional_cache"] is True

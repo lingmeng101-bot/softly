@@ -368,6 +368,7 @@ def _cloak_session(route):
             proxy=None if key == LEG_DIRECT else config.PROXY_HTTP,
             timeout=30,
             http_version=config.HTTPCLOAK_HTTP_VERSION,   # HTTP/3 需要 UDP 中继，保持 auto 自动回落 h2
+            without_conditional_cache=True,   # 禁用条件缓存，避免重复请求返回 304 空 body
         )
         _cloak_sessions[key] = session
     return session
